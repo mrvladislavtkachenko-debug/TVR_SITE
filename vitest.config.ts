@@ -22,6 +22,13 @@ export default defineConfig({
       },
       {
         test: {
+          name: 'db',
+          include: ['packages/db/test/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
+      {
+        test: {
           name: 'api',
           include: ['apps/api/test/**/*.test.ts'],
           environment: 'node',

@@ -2,7 +2,11 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# Postinstall-скрипты, разрешённые pnpm@10 (esbuild нужен tsx/vitest).
-# prisma будет добавлен в M2.
+# Postinstall-скрипты, разрешённые pnpm@10:
+# - esbuild нужен tsx/vitest;
+# - prisma-пакеты качают query-engine для generate (M2).
 onlyBuiltDependencies:
   - esbuild
+  - prisma
+  - "@prisma/client"
+  - "@prisma/engines"

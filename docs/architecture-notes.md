@@ -38,3 +38,30 @@
 **Отклонение от:** §39.14 (env `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET_ENCRYPTED`).
 
 **Решение:** по Э6 переменные исключены из `.env.example`; учётка владельца создаётся CLI-командой seed в M2 (`pnpm --filter @tas/api seed:admin`), TOTP-секрет шифруется `ENCRYPTION_KEY`. Пароль/секрет не живут в env вовсе.
+
+## AN-12 — email без citext (2026-08-29, M2)
+
+**Отклонение от:** PRD §15 (упоминание citext для email).
+
+**Решение:** `@db.Text` + нормализация в lower-case на прикладном уровне (zod-трансформ в API, `.toLowerCase()` в seed-CLI). Уникальность — обычный unique-индекс по нормализованному значению.
+
+**Почему:** citext — PG-расширение (не везде доступно в managed-Postgres), не поддерживается Prisma-схемой декларативно; нормализация в одном месте даёт тот же инвариант без расширений.
+
+## AN-13 — структурные решения @tas/db (2026-08-29, M2, утверждено владельцем)
+
+- Prisma-схема/клиент/seed живут в `packages/db` (`@tas/db`); депы prisma/@prisma/client — только в этом пакете; apps зависят от `@tas/db`.
+- Клиент не коммитится (генерация в postinstall), миграции коммитятся.
+- `dbEnvSchema` (NODE_ENV, DATABASE_URL) и `adminSeedEnvSchema` (+ENCRYPTION_KEY) в `@tas/shared`: seed/CLI не требуют Telegram/S3/LLM ключей.
+- Крипто-утилиты (AES-256-GCM) и обёртка argon2id (OWASP m=19456,t=2,p=1) — в `@tas/db/src`: используются seed-CLI админа и (в M4) API авторизации.
+- Генератор стандартный `prisma-client-js`, без preview-фич (queryCompiler не используется — прод-стабильность важнее удобства песочницы).
+
+## AN-14 — миграция 0_init написана вручную + raw-SQL секция (2026-08-29, M2)
+
+**Контекст:** в среде разработки недоступен binaries.prisma.sh → `prisma migrate diff/dev` не выполняются; артефакты при этом обязаны быть стандартными.
+
+**Решение:** `prisma/migrations/20260829164000_init/migration.sql` написан вручную в точном DDL-стиле Prisma (перечисление: 20 enum'ов, 24 таблицы, 34 индекса Prisma-именования, 22 FK) + raw-SQL секция по контракту M2:
+- `attributions_one_first_touch` — UNIQUE (user_id) WHERE touch='first' (Э1);
+- `attributions_one_current_last_touch` — UNIQUE (user_id) WHERE touch='last' AND is_current (следствие Э1: «актуальная» last_touch ровно одна; история касаний — строками is_current=false);
+- `events_properties_gin` — GIN (properties).
+
+**Верификация:** применена к живой БД через pg-драйвер; инварианты Э1/Э8 проверены живыми INSERT (duplicate → 23505), GIN-Containment-запрос работает. Эквивалентность схеме на машине с полным доступом: `pnpm --filter @tas/db exec prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-url "$DATABASE_URL" --script` → пустой вывод.

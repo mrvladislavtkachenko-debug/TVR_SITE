@@ -1,34 +1,19 @@
-import net from 'node:net';
 import { Redis } from 'ioredis';
 import { apiEnvSchema, loadRootEnv, parseEnv } from '@tas/shared';
+import { createPrisma } from '@tas/db';
 import { buildServer, type ComponentState } from './server.js';
 
 loadRootEnv();
 const env = parseEnv(apiEnvSchema);
+const prisma = createPrisma(env.DATABASE_URL);
 
-/** TCP-check БД (TD-001: заменить на SELECT 1 через Prisma в M2). */
-export function dbTcpCheck(databaseUrl: string, timeoutMs = 1000): Promise<ComponentState> {
-  const url = new URL(databaseUrl);
-  const port = url.port ? Number(url.port) : 5432;
-  return new Promise((resolve) => {
-    const socket = net.createConnection({ host: url.hostname, port });
-    socket.setTimeout(timeoutMs);
-    socket.once('connect', () => {
-      socket.destroy();
-      resolve('up');
-    });
-    socket.once('error', () => {
-      socket.destroy();
-      resolve('down');
-    });
-    socket.once('timeout', () => {
-      socket.destroy();
-      resolve('down');
-    });
-  });
+/** TD-001 закрыт (M2): реальный запрос к БД вместо tcp-check. */
+export async function dbCheck(): Promise<ComponentState> {
+  const rows = await prisma.$queryRaw`SELECT 1`;
+  return Array.isArray(rows) && rows.length > 0 ? 'up' : 'down';
 }
 
-/** Redis PING свежим соединением (без зависания на ретраях). */
+/** Redis PING свежим соединением. */
 export async function queueCheck(redisUrl: string, timeoutMs = 1000): Promise<ComponentState> {
   const redis = new Redis(redisUrl, {
     lazyConnect: true,
@@ -57,10 +42,10 @@ export async function queueCheck(redisUrl: string, timeoutMs = 1000): Promise<Co
 async function main(): Promise<void> {
   const app = await buildServer({
     checks: {
-      db: () => dbTcpCheck(env.DATABASE_URL),
+      db: dbCheck,
       queue: () => queueCheck(env.REDIS_URL),
     },
-    logger: { level: env.NODE_ENV === 'development' ? 'info' : 'info' },
+    logger: { level: 'info' },
   });
 
   await app.listen({ port: env.APP_PORT, host: '0.0.0.0' });
@@ -68,6 +53,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'graceful shutdown');
     await app.close();
+    await prisma.$disconnect();
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM').then(() => process.exit(0)));
   process.once('SIGINT', () => void shutdown('SIGINT').then(() => process.exit(0)));

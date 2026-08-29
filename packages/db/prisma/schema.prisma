@@ -1,0 +1,500 @@
+// TAS — Prisma schema (PRD §15, MVP-набор минус link_visits по Э3 = 24 таблицы).
+// Эррата: Э1 (attributions без UNIQUE(user_id,touch), +is_current),
+//         Э2 (messages_outbox.broadcast_id), Э3 (link_visits отсутствует).
+// Частичный unique-индекс attributions(touch='first') и GIN на events.properties
+// объявлены raw-SQL в миграции (Prisma их не выражает) — см. prisma/migrations.
+// email: @db.Text + нормализация в lower-case на прикладном уровне (AN-12, citext не используем).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum CampaignStatus {
+  draft
+  active
+  paused
+  done
+}
+
+enum ClusterStatus {
+  active
+  paused
+}
+
+enum KeywordIntent {
+  info
+  template
+  buyer
+}
+
+enum KeywordStatus {
+  active
+  paused
+}
+
+enum PinStatus {
+  idea
+  approved
+  scheduled
+  published
+  paused
+}
+
+enum AttributionTouch {
+  first
+  last
+}
+
+enum PinMetricSource {
+  api
+  csv
+}
+
+enum LifecycleState {
+  new
+  onboarded
+  activated
+  engaged
+  lead
+  customer
+  at_risk
+  churned
+  reactivated
+  blocked
+}
+
+enum MessageFrequency {
+  normal
+  low
+}
+
+enum SegmentKind {
+  static
+  dynamic
+}
+
+enum SegmentOrigin {
+  onboarding
+  rule
+  manual
+}
+
+enum FlowStatus {
+  draft
+  active
+  archived
+}
+
+enum FlowRunStatus {
+  active
+  completed
+  cancelled
+  failed
+}
+
+enum MessageOutboxKind {
+  flow
+  broadcast
+  transactional
+}
+
+enum MessageOutboxStatus {
+  pending
+  sending
+  sent
+  failed
+  skipped
+}
+
+enum BroadcastStatus {
+  draft
+  queued
+  sending
+  done
+  cancelled
+}
+
+enum OrderStatus {
+  pending
+  paid
+  refunded
+  failed
+}
+
+enum DeliveryKind {
+  file
+  link
+  text
+}
+
+enum AdminRole {
+  owner
+  editor
+  viewer
+}
+
+enum ActorType {
+  admin
+  system
+  ai
+}
+
+// ---------------------------------------------------------------------------
+// 1. Справочники трафика
+// ---------------------------------------------------------------------------
+
+model sources {
+  code      String  @id @db.VarChar(32) // pinterest | direct | telegram_organic | ...
+  name      String
+  is_active Boolean @default(true)
+}
+
+model campaigns {
+  id        BigInt          @id @default(autoincrement()) @db.BigInt
+  code      String          @unique @db.VarChar(64)
+  name      String
+  status    CampaignStatus  @default(draft)
+  starts_at DateTime?       @db.Timestamptz(3)
+  ends_at   DateTime?       @db.Timestamptz(3)
+  notes     String?         @db.Text
+  created_at DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@index([status])
+}
+
+model content_clusters {
+  id         BigInt        @id @default(autoincrement()) @db.BigInt
+  slug       String        @unique @db.VarChar(96)
+  name       String
+  board_name String?       @db.VarChar(128)
+  locale     String        @default("en") @db.VarChar(8)
+  status     ClusterStatus @default(active)
+  created_at DateTime      @default(now()) @db.Timestamptz(3)
+}
+
+model keywords {
+  id         BigInt         @id @default(autoincrement()) @db.BigInt
+  cluster_id BigInt         @db.BigInt
+  cluster    content_clusters @relation(fields: [cluster_id], references: [id])
+  phrase     String         @db.VarChar(255)
+  intent     KeywordIntent
+  est_volume Int?
+  status     KeywordStatus  @default(active)
+
+  @@index([cluster_id])
+}
+
+model pins {
+  id                BigInt      @id @default(autoincrement()) @db.BigInt
+  cluster_id        BigInt      @db.BigInt
+  cluster           content_clusters @relation(fields: [cluster_id], references: [id])
+  keyword_id        BigInt?     @db.BigInt
+  keyword           keywords?   @relation(fields: [keyword_id], references: [id])
+  campaign_id       BigInt?     @db.BigInt
+  campaign          campaigns?  @relation(fields: [campaign_id], references: [id])
+  title             String      @db.Text
+  description       String?     @db.Text
+  creative_variants Json?
+  image_url         String?     @db.Text
+  pin_id_pinterest  String?     @unique @db.VarChar(32)
+  board             String?     @db.VarChar(128)
+  status            PinStatus   @default(idea)
+  published_at      DateTime?   @db.Timestamptz(3)
+  created_at        DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@index([cluster_id])
+  @@index([status])
+}
+
+model landing_pages {
+  id         BigInt   @id @default(autoincrement()) @db.BigInt
+  slug       String   @unique @db.VarChar(96)
+  cluster_id BigInt   @db.BigInt
+  cluster    content_clusters @relation(fields: [cluster_id], references: [id])
+  headline   String   @db.Text
+  bullets    Json?
+  cta_text   String   @db.Text
+  template   String   @default("default") @db.VarChar(32)
+  variant    String   @default("A") @db.VarChar(8)
+  is_active  Boolean  @default(true)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+}
+
+// ---------------------------------------------------------------------------
+// 2. Атрибуция (Э3: link_visits отсутствует — переходы в events; Э1: без UNIQUE(user_id,touch))
+// ---------------------------------------------------------------------------
+
+model tracking_links {
+  id              BigInt   @id @default(autoincrement()) @db.BigInt
+  short_code      String   @unique @db.VarChar(16) // {PREFIX}{nanoid(10)} — формат фиксирован
+  source_id       String   @db.VarChar(32)
+  source          sources  @relation(fields: [source_id], references: [code])
+  campaign_id     BigInt?  @db.BigInt
+  campaign        campaigns? @relation(fields: [campaign_id], references: [id])
+  cluster_id      BigInt?  @db.BigInt
+  cluster         content_clusters? @relation(fields: [cluster_id], references: [id])
+  keyword_id      BigInt?  @db.BigInt
+  keyword         keywords? @relation(fields: [keyword_id], references: [id])
+  pin_id          BigInt?  @db.BigInt
+  pin             pins?    @relation(fields: [pin_id], references: [id])
+  landing_slug    String?  @db.VarChar(96) // не FK: связка по slug (PRD §15.2)
+  creative_variant String? @db.VarChar(8)
+  landing_variant String?  @db.VarChar(8)
+  placement       String?  @db.VarChar(128)
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([pin_id])
+  @@index([campaign_id])
+}
+
+model attributions {
+  id              BigInt          @id @default(autoincrement()) @db.BigInt
+  user_id         BigInt          @db.BigInt
+  user            users           @relation(fields: [user_id], references: [id])
+  touch           AttributionTouch
+  // Э1: актуальная last_touch помечается is_current.
+  // Инварианты «ровно один first_touch» и «ровно одна текущая last_touch» —
+  // частичные unique-индексы в raw-SQL миграции.
+  is_current      Boolean         @default(false)
+  tracking_link_id BigInt         @db.BigInt
+  tracking_link   tracking_links  @relation(fields: [tracking_link_id], references: [id])
+  occurred_at     DateTime        @default(now()) @db.Timestamptz(3)
+
+  @@index([user_id])
+  @@index([tracking_link_id])
+}
+
+model pin_metrics_daily {
+  pin_id          BigInt   @db.BigInt
+  pin             pins     @relation(fields: [pin_id], references: [id])
+  date            DateTime @db.Date
+  impressions     Int      @default(0)
+  saves           Int      @default(0)
+  outbound_clicks Int      @default(0)
+  source          PinMetricSource @default(csv)
+
+  @@id([pin_id, date])
+}
+
+// ---------------------------------------------------------------------------
+// 3. Пользователи
+// ---------------------------------------------------------------------------
+
+model users {
+  id             BigInt   @id @default(autoincrement()) @db.BigInt
+  telegram_id    BigInt   @unique @db.BigInt
+  username       String?  @db.VarChar(64)
+  first_name     String?  @db.Text
+  locale         String?  @db.VarChar(8)
+  is_blocked     Boolean  @default(false)
+  blocked_at     DateTime? @db.Timestamptz(3)
+  first_seen_at  DateTime @default(now()) @db.Timestamptz(3)
+  last_activity_at DateTime @default(now()) @db.Timestamptz(3)
+  created_at     DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model user_profiles {
+  user_id                BigInt  @id @db.BigInt
+  user                   users   @relation(fields: [user_id], references: [id])
+  lifecycle_state        LifecycleState @default(new)
+  fsm_state              Json?
+  interest_segment_id    BigInt? @db.BigInt
+  message_frequency      MessageFrequency @default(normal)
+  email                  String? @db.Text // lower-case на прикладном уровне (AN-12)
+  email_verified         Boolean @default(false)
+  timezone               String? @db.VarChar(64)
+  onboarding_completed_at DateTime? @db.Timestamptz(3)
+  activated_at           DateTime? @db.Timestamptz(3)
+  updated_at             DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+}
+
+model segments {
+  id         BigInt      @id @default(autoincrement()) @db.BigInt
+  code       String      @unique @db.VarChar(64)
+  name       String
+  kind       SegmentKind @default(static)
+  rule_json  Json?
+  created_at DateTime    @default(now()) @db.Timestamptz(3)
+}
+
+model user_segments {
+  user_id    BigInt        @db.BigInt
+  segment_id BigInt        @db.BigInt
+  added_at   DateTime      @default(now()) @db.Timestamptz(3)
+  removed_at DateTime?     @db.Timestamptz(3)
+  origin     SegmentOrigin @default(onboarding)
+
+  @@id([user_id, segment_id])
+  @@index([segment_id, removed_at])
+}
+
+// ---------------------------------------------------------------------------
+// 4. События и автоматизации
+// ---------------------------------------------------------------------------
+
+model events {
+  id              BigInt   @id @default(autoincrement()) @db.BigInt
+  name            String   @db.VarChar(64)
+  user_id         BigInt?  @db.BigInt
+  user            users?   @relation(fields: [user_id], references: [id])
+  tracking_link_id BigInt? @db.BigInt
+  tracking_link   tracking_links? @relation(fields: [tracking_link_id], references: [id])
+  occurred_at     DateTime @default(now()) @db.Timestamptz(3)
+  properties      Json     @default("{}")
+  // Э8: батч-инсерты с ON CONFLICT (dedup_key) DO NOTHING (unique-индекс ниже).
+  dedup_key       String?  @unique @db.VarChar(128)
+
+  @@index([name, occurred_at])
+  @@index([user_id, occurred_at])
+  // GIN на properties — raw-SQL миграция (Prisma не выражает GIN)
+}
+
+model automation_flows {
+  id         BigInt     @id @default(autoincrement()) @db.BigInt
+  code       String     @db.VarChar(64)
+  version    Int        @default(1)
+  definition Json
+  status     FlowStatus @default(draft)
+  created_at DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@unique([code, version])
+}
+
+model flow_runs {
+  id           BigInt        @id @default(autoincrement()) @db.BigInt
+  flow_id      BigInt        @db.BigInt
+  flow         automation_flows @relation(fields: [flow_id], references: [id])
+  flow_version Int
+  user_id      BigInt        @db.BigInt
+  user         users         @relation(fields: [user_id], references: [id])
+  status       FlowRunStatus @default(active)
+  current_step Int           @default(0)
+  context      Json?
+  started_at   DateTime      @default(now()) @db.Timestamptz(3)
+  finished_at  DateTime?     @db.Timestamptz(3)
+
+  @@index([user_id, status])
+}
+
+model message_templates {
+  id        BigInt  @id @default(autoincrement()) @db.BigInt
+  code      String  @db.VarChar(64)
+  locale    String  @default("en") @db.VarChar(8)
+  body      String  @db.Text
+  buttons   Json?
+  version   Int     @default(1)
+  is_active Boolean @default(true)
+
+  @@unique([code, locale, version])
+}
+
+model broadcasts {
+  id            BigInt          @id @default(autoincrement()) @db.BigInt
+  code          String          @unique @db.VarChar(64)
+  name          String
+  segment_codes Json
+  template_code String          @db.VarChar(64)
+  scheduled_at  DateTime?       @db.Timestamptz(3)
+  status        BroadcastStatus @default(draft)
+  stats         Json?
+  created_at    DateTime        @default(now()) @db.Timestamptz(3)
+}
+
+model messages_outbox {
+  id                  BigInt             @id @default(autoincrement()) @db.BigInt
+  user_id             BigInt             @db.BigInt
+  user                users              @relation(fields: [user_id], references: [id])
+  kind                MessageOutboxKind
+  template_code       String?            @db.VarChar(64)
+  payload             Json?
+  status              MessageOutboxStatus @default(pending)
+  telegram_message_id BigInt?            @db.BigInt
+  scheduled_at        DateTime           @default(now()) @db.Timestamptz(3)
+  sent_at             DateTime?          @db.Timestamptz(3)
+  error               String?            @db.Text
+  dedup_key           String?            @unique @db.VarChar(128)
+  // Э2: связь с рассылкой
+  broadcast_id        BigInt?            @db.BigInt
+  broadcast           broadcasts?        @relation(fields: [broadcast_id], references: [id])
+
+  @@index([status, scheduled_at])
+  @@index([user_id])
+}
+
+model telegram_updates {
+  id           BigInt   @id @default(autoincrement()) @db.BigInt
+  update_id    BigInt   @unique @db.BigInt
+  payload      Json
+  received_at  DateTime @default(now()) @db.Timestamptz(3)
+  processed_at DateTime? @db.Timestamptz(3)
+}
+
+// ---------------------------------------------------------------------------
+// 5. Монетизация и сервис
+// ---------------------------------------------------------------------------
+
+model products {
+  id               BigInt       @id @default(autoincrement()) @db.BigInt
+  code             String       @unique @db.VarChar(64)
+  name             String
+  description      String?      @db.Text
+  price_stars      Int
+  price_usd        Decimal      @db.Decimal(8, 2)
+  delivery_kind    DeliveryKind
+  delivery_payload Json?
+  is_active        Boolean      @default(true)
+  created_at       DateTime     @default(now()) @db.Timestamptz(3)
+}
+
+model orders {
+  id                        BigInt      @id @default(autoincrement()) @db.BigInt
+  user_id                   BigInt      @db.BigInt
+  user                      users       @relation(fields: [user_id], references: [id])
+  product_id                BigInt      @db.BigInt
+  product                   products    @relation(fields: [product_id], references: [id])
+  status                    OrderStatus @default(pending)
+  stars_amount              Int
+  // Э9: usd_equiv = stars_amount × STAR_USD_RATE (env); заполняется приложением
+  usd_equiv                 Decimal?    @db.Decimal(8, 2)
+  telegram_payment_charge_id String?    @unique @db.VarChar(128)
+  created_at                DateTime    @default(now()) @db.Timestamptz(3)
+  paid_at                   DateTime?   @db.Timestamptz(3)
+
+  @@index([user_id])
+  @@index([product_id, paid_at])
+}
+
+model admin_users {
+  id                    BigInt    @id @default(autoincrement()) @db.BigInt
+  email                 String    @unique @db.Text // lower-case (AN-12)
+  password_hash         String    @db.Text // argon2id, OWASP-параметры (см. src/argon2.ts)
+  totp_secret_encrypted String    @db.Text // AES-256-GCM, ключ ENCRYPTION_KEY (Э6)
+  role                  AdminRole @default(owner)
+  is_active             Boolean   @default(true)
+  last_login_at         DateTime? @db.Timestamptz(3)
+  created_at            DateTime  @default(now()) @db.Timestamptz(3)
+}
+
+model audit_logs {
+  id         BigInt    @id @default(autoincrement()) @db.BigInt
+  actor_type ActorType
+  actor_id   String?   @db.VarChar(64)
+  action     String    @db.VarChar(64)
+  entity     String    @db.VarChar(64)
+  entity_id  String?   @db.VarChar(64)
+  meta       Json?
+  ts         DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([entity, entity_id])
+  @@index([ts])
+}

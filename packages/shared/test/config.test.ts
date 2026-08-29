@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adminSeedEnvSchema,
   apiEnvSchema,
   baseEnvSchema,
   botEnvSchema,
+  dbEnvSchema,
   parseEnv,
   workerEnvSchema,
   type BaseEnv,
@@ -98,5 +100,28 @@ describe('пер-апп расширения', () => {
     const env = parseEnv(workerEnvSchema, validBase);
     expect('APP_PORT' in env).toBe(false);
     expect('BOT_PORT' in env).toBe(false);
+  });
+
+  it('dbEnvSchema: только DATABASE_URL/NODE_ENV — seed не требует Telegram/S3/LLM (M2)', () => {
+    const env = parseEnv(dbEnvSchema, {
+      NODE_ENV: 'development',
+      DATABASE_URL: 'postgresql://tas:tas_dev@localhost:5432/tas',
+    });
+    expect('TELEGRAM_BOT_TOKEN' in env).toBe(false);
+    expect('S3_BUCKET' in env).toBe(false);
+    expect('LLM_API_KEY' in env).toBe(false);
+  });
+
+  it('adminSeedEnvSchema: dbEnvSchema + ENCRYPTION_KEY ≥32', () => {
+    const ok = adminSeedEnvSchema.safeParse({
+      DATABASE_URL: 'postgresql://tas:tas_dev@localhost:5432/tas',
+      ENCRYPTION_KEY: 'base64key_with_at_least_32_characters==',
+    });
+    expect(ok.success).toBe(true);
+    const short = adminSeedEnvSchema.safeParse({
+      DATABASE_URL: 'postgresql://tas:tas_dev@localhost:5432/tas',
+      ENCRYPTION_KEY: 'short',
+    });
+    expect(short.success).toBe(false);
   });
 });

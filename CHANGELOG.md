@@ -25,3 +25,35 @@
 
 ### Дальше
 M2 — Prisma schema по §15 с эрратой, миграции, seed.
+
+## M2 — Database (2026-08-29)
+
+### Что сделано
+- `packages/db` (@tas/db): prisma-схема (24 таблицы = §15 MVP минус link_visits по Э3),
+  миграции коммитятся, клиент генерируется в postinstall; депы prisma — только в этом пакете.
+- Эррата в схеме: Э1 — attributions БЕЗ UNIQUE(user_id,touch), +is_current, инварианты
+  «один first_touch»/«одна текущая last_touch» — частичные unique-индексы raw-SQL;
+  Э2 — messages_outbox.broadcast_id (FK, NULL); Э3 — link_visits отсутствует.
+- Составные PK: pin_metrics_daily(pin_id,date), user_segments(user_id,segment_id).
+  timestamptz(3) на всех temporal-колонках (проверено: 35 колонок, 0 без tz). email —
+  @db.Text + lower-case нормализация (AN-12, без citext).
+- Миграция `0_init` написана вручную в DDL-стиле Prisma (среда разработки без доступа к
+  binaries.prisma.sh — TD-005), применена к БД и верифицирована: 24 таблицы, 20 enum'ов,
+  22 FK, 60 индексов; Э1/Э8 проверены живыми INSERT (23505), GIN-запрос работает.
+- Идемпотентный seed: sources (3), сегменты S1–S4, 3 флоу §13.2 (welcome_series_v1,
+  checkout_abandonment_v1, winback_v1, active), 8 en-шаблонов, продукт planner_pack.
+- seed-CLI админа (Э6/AN-11): argon2id OWASP (m=19456,t=2,p=1, константа) + TOTP-секрет
+  AES-256-GCM (ENCRYPTION_KEY), otpauth-URI печатается один раз, self-check расшифровки.
+- TD-001 закрыт: /health в api и bot делает SELECT 1 через Prisma ($disconnect в shutdown).
+- Новые env-схемы: dbEnvSchema / adminSeedEnvSchema (seed не требует Telegram/S3/LLM).
+
+### Как проверить (машина с полным сетевым доступом)
+```
+pnpm install && pnpm db:migrate:deploy && pnpm db:seed
+pnpm db:seed:admin -- --email owner@example.com --password 'S3cure!pass'
+# drift-чек схемы (должен быть пустым):
+pnpm --filter @tas/db exec prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-url "$DATABASE_URL" --script
+```
+
+### Дальше
+M3 — атрибуция: tracking_links (t1+nanoid(10)), резолв с кэшем 60s, bridge /m/:slug, события link_click/bridge_view.

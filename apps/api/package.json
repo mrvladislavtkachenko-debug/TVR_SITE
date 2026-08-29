@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tas/db": "workspace:*",
     "@tas/shared": "workspace:*",
     "fastify": "^5.3.0",
     "ioredis": "^5.6.0"

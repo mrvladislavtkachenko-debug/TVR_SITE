@@ -15,7 +15,11 @@
     "test": "vitest run",
     "format": "prettier --write .",
     "compose:up": "docker compose -f infra/compose.base.yml up -d",
-    "compose:down": "docker compose -f infra/compose.base.yml down"
+    "compose:down": "docker compose -f infra/compose.base.yml down",
+    "db:migrate:dev": "pnpm --filter @tas/db migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @tas/db migrate:deploy",
+    "db:seed": "pnpm --filter @tas/db seed",
+    "db:seed:admin": "pnpm --filter @tas/db seed:admin"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",

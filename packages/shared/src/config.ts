@@ -95,6 +95,24 @@ export const workerEnvSchema = baseEnvSchema;
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
 
 /**
+ * packages/db + seed/CLI (утверждено владельцем, M2): только переменные БД.
+ * Seed НЕ должен требовать Telegram/S3/LLM ключи — поэтому отдельная схема.
+ */
+export const dbEnvSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  DATABASE_URL: urlish,
+});
+
+export type DbEnv = z.infer<typeof dbEnvSchema>;
+
+/** seed:admin CLI — дополнительно требует ключ шифрования TOTP (Э6). */
+export const adminSeedEnvSchema = dbEnvSchema.extend({
+  ENCRYPTION_KEY: z.string().min(32, 'ENCRYPTION_KEY: минимум 32 символа'),
+});
+
+export type AdminSeedEnv = z.infer<typeof adminSeedEnvSchema>;
+
+/**
  * Парсинг env со списком всех проблем сразу (не по одной).
  * Пустые строки и пробельные значения трактуются как «не задано» (unset):
  * опциональные поля с `SENTRY_DSN=` в .env не падают, обязательные
