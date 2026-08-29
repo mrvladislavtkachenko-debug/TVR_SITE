@@ -1,6 +1,6 @@
 # CHANGELOG
 
-Формат:里程碑-записи по мере завершения milestone'ов (PRD §40, M1–M10).
+Формат: milestone-записи по мере завершения milestone'ов (PRD §40, M1–M10).
 
 ## M1 — Scaffold (2026-08-29)
 
