@@ -6,7 +6,6 @@ import { UpdatePipeline } from '../src/pipeline.js';
 import { markUpdateProcessed } from '@tas/db/services';
 import { createBot, createTransport } from '../src/telegram.js';
 import { registerBotHandlers } from '../src/handlers.js';
-import { OutboxSender } from '../src/outboxSender.js';
 import {
   FakeTransport,
   MemoryLogger,
@@ -141,12 +140,11 @@ describe('webhook /webhook/telegram', () => {
     await app.close();
   });
 
-  describe('полная цепочка через HTTP-мок Telegram Bot API', () => {
+  describe('webhook → обработка → outbox (отправка — apps/worker, M6)', () => {
     let mock: MockTelegramServer;
     let db: FakeBotDb;
     let app: FastifyInstance;
     let pipeline: UpdatePipeline;
-    let sender: OutboxSender;
 
     beforeAll(async () => {
       mock = new MockTelegramServer();
@@ -170,7 +168,6 @@ describe('webhook /webhook/telegram', () => {
         await bot.handleUpdate(update);
         await markUpdateProcessed(db.executor, rowId);
       }, log);
-      sender = new OutboxSender({ executor: db.executor, transport, log }, { perChatIntervalMs: 0 });
       app = await makeApp(db, pipeline);
     });
 
@@ -189,24 +186,22 @@ describe('webhook /webhook/telegram', () => {
       });
       expect(r.statusCode).toBe(200);
       await pipeline.idle();
-      expect(db.outboxPending()).toHaveLength(2);
 
-      // пейсинг: ≤1 сообщение на чат за тик — второй тик забирает второе
-      const res1 = await sender.tick();
-      expect(res1.sent).toBe(1);
-      expect(res1.deferred).toBe(1);
-      const res2 = await sender.tick();
-      expect(res2.sent).toBe(1);
-      const methods = mock.calls.map((c) => c.method);
-      expect(methods).toContain('sendDocument');
-      expect(methods).toContain('sendMessage');
-      const doc = mock.calls.find((c) => c.method === 'sendDocument');
-      expect(doc?.body.document).toBe('https://files.example.com/lm.pdf');
-      const q1 = mock.calls.find((c) => c.method === 'sendMessage');
-      expect((q1?.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard).toHaveLength(4);
-      expect(db.outbox.every((o) => o.status === 'sent')).toBe(true);
-      expect(db.eventsByName('lead_magnet_delivered')).toHaveLength(1);
+      // M6: бот — webhook-only; исходящие ФИКСИРУЮТСЯ в outbox (отправляет
+      // apps/worker). Форма строк = контракт с отправителем.
+      expect(db.outboxPending()).toHaveLength(2);
+      const doc = db.outboxPending().find((o) => o.payload.document);
+      expect(doc?.payload.document).toMatchObject({ url: 'https://files.example.com/lm.pdf' });
+      expect(doc?.payload.delivery_kind).toBe('file');
+      const q1 = db.outboxPending().find((o) => o.payload.text);
+      expect((q1?.payload.buttons as { callbackData: string }[]).map((b) => b.callbackData)).toEqual([
+        'q1:S1',
+        'q1:S2',
+        'q1:S3',
+        'q1:S4',
+      ]);
       expect(db.eventsByName('telegram_start')[0]!.properties.payload_status).toBe('ok');
+      expect(mock.calls).toHaveLength(0); // бот ничего не отправляет напрямую
     });
   });
 });

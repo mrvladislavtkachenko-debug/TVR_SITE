@@ -18,6 +18,9 @@ function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url');
 }
 
+/** Роли админов (§22 RBAC) — enum для валидации claims (TD-007, M6). */
+const ADMIN_ROLES = ['owner', 'editor', 'viewer'] as const;
+
 export function signJwt(claims: Omit<JwtClaims, 'exp' | 'iat'>, secret: string, ttlSeconds = 900): string {
   const now = Math.floor(Date.now() / 1000);
   const payload: JwtClaims = { ...claims, iat: now, exp: now + ttlSeconds };
@@ -57,7 +60,12 @@ export function verifyJwt(token: string, secret: string): JwtClaims {
   if (typeof claims.exp !== 'number' || claims.exp <= Math.floor(Date.now() / 1000)) {
     throw new JwtError('token expired');
   }
-  if (typeof claims.sub !== 'string' || typeof claims.role !== 'string') {
+  // TD-007 закрыт (M6, требование владельца): role валидируется против enum,
+  // а не только typeof string — чужое значение не проходит в RBAC-веса
+  if (
+    typeof claims.sub !== 'string' ||
+    !ADMIN_ROLES.includes(claims.role as (typeof ADMIN_ROLES)[number])
+  ) {
     throw new JwtError('invalid claims');
   }
   return claims;

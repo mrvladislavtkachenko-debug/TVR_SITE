@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderTemplate, templateButtons } from '../src/templates.js';
+import { renderTemplate, templateButtons } from '@tas/db/services';
 import { CALLBACK } from '../src/fsm.js';
 import { messageLengthBucket, telegramStartPropsSchema } from '@tas/shared';
 

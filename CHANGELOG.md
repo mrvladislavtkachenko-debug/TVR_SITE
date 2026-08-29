@@ -171,3 +171,62 @@ M5 — бот: webhook + secret_token, идемпотентность update_id,
 M6 — автоматизация: BullMQ (outbox-sender с лимитами 25/s + cap/день, delayed
 jobs), интерпретатор automation_flows §13.1 (welcome/abandonment/win-back), TTL
 telegram_updates, cron-пересчёт lifecycle/сегментов.
+
+## M6 — Automation: BullMQ-воркер, интерпретатор флоу §13.1, lifecycle/cron (2026-08-29)
+
+### Что сделано
+- **`apps/worker` (новый, §20 Redis-стек — bullmq/ioredis из контракта M6):**
+  - Очередь `tas-outbox`: сканер (500ms) выбирает pending-строки по
+    scheduled_at → джобы `ob-{outbox_id}` (limiter **25/s глобально**,
+    concurrency 5, attempts 3 / backoff 5s). Отправка — fetch-транспорт,
+    senderCore без изменений семантики (AN-25).
+  - **Пейсинг 1 msg/s на чат** без BullMQ groups (AN-26): джоба кладётся в
+    очередь с delay = max(now, last_sent_at(chat)+1s).
+  - Очередь `tas-flows`: джобы `fr-{run}-{step}` (attempts 3 / backoff 10s);
+    delayed-шаги (delay-экшен, межшаговые паузы) живут в Redis.
+  - **Rehydrate при старте** (контракт M6): 'sending'-строки outbox → pending,
+    активные flow_runs → перепланирование текущего шага по context.next_fire_at
+    (идемпотентно по jobId).
+  - **Интерпретатор §13.1** (`flowEngine.ts`): trigger (event/segment_entered/
+    state_changed/schedule/manual), conditions (профиль/сегменты/счётчики
+    событий за период), actions (send_message, add/remove_segment,
+    set_profile_field, delay, branch goto(CODE), notify_admin, cancel_flow),
+    guard `cancel_if` (user_blocked/unsubscribed/purchased_product) —
+    проверяется на КАЖДОМ шаге; дедуп шага `{flow_run}:{step}`; версии флоу —
+    code+version, ровно одна active. Repeat-guard флоу (AN-27).
+  - **Лимиты (контракт):** `DAILY_MSG_CAP_PER_USER` (UTC-сутки, только
+    kind=flow/broadcast; превышение → pending + scheduled_at=следующая
+    UTC-полночь); **429 retry_after** → retryOutboxAt(+retry_after+1s) +
+    worker.rateLimit; **403** → blocked-каскад (markUserBlocked +
+    cancelActiveFlowRuns + skipAllOutboxForUser).
+  - **EventPoller** (1s): events → триггеры флоу + мгновенные lifecycle-
+    переходы (activated по button_clicked / 2×content_viewed и т.д.); watermark
+    — история при старте не проигрывается.
+  - **Cron (часовой):** TTL telegram_updates 7d; lifecycle-пересчёт
+    (new→churned 7d, →at_risk 14d, at_risk→churned 30d, →engaged); dynamic
+    segments (intent_high, cold) из rule_json, membership origin='rule'.
+  - Метрики очереди (depth/processed/failed) — в лог + /health (WORKER_PORT).
+- **Миграция sender bot → worker (AN-25):** из бота удалены outboxSender.ts и
+  emit.ts (бот — webhook-only); TD-011 (два Bot API-клиента) задокументирован;
+  TD-007 закрыт (verifyJwt zod-role — решение при приёмке M5).
+- **Seed:** 3 флоу на реальных триггерах — welcome_series
+  (onboarding_completed, guard purchased_product, branch), abandonment
+  (checkout_opened без покупки 48h), winback (at_risk, repeat_days 30);
+  динамические сегменты intent_high/cold.
+
+### Как проверено
+- 192/192 тестов (+36 к M5, 28 файлов): интерпретатор (триггеры/условия/guard
+  на каждом шаге/branch goto/дедуп/версии/repeat-guard), отправитель, rehydrate,
+  cron (TTL/lifecycle/сегменты), poller (watermark/мгновенные переходы);
+  3 теста на РЕАЛЬНОМ Redis+BullMQ (delayed-джоба переживает close воркера и
+  исполняется вторым ровно 1 раз; идемпотентность scheduleStep/rehydrate).
+- Живой прогон против реального PG + Redis + HTTP-мока Bot API: poll → flow_run
+  → шаги → outbox → HTTP-отправка; daily cap (pending до полуночи); 429 →
+  ретрай; close воркеров → rehydrate → delayed-шаг доходит до outbox; TTL.
+  Пойманы и исправлены 2 рантайм-дефекта: BullMQ запрещает ':' в имени очереди
+  и в custom jobId (`tas:*` → `tas-*`, `ob:*`/`fr:*:*` → `ob-*`/`fr-*-*`).
+- lint ✅, typecheck 6/6 ✅.
+
+### Дальше
+M7 — Stars-платежи (диджитал-товары, XTR; условие приёмки M5: non-guessable
+per-product capability-ключи, URL лид-магнита не переиспользовать).

@@ -10,3 +10,6 @@ export * from './users.js';
 export * from './outbox.js';
 export * from './updates.js';
 export * from './flowruns.js';
+export * from './templates.js';
+export * from './flows.js';
+export * from './emit.js';

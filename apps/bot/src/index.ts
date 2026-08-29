@@ -1,14 +1,17 @@
 import { Redis } from 'ioredis';
 import { botEnvSchema, loadRootEnv, parseEnv } from '@tas/shared';
 import { createPrisma } from '@tas/db/client';
-import { createRedisCache, markUpdateProcessed, prismaExecutor } from '@tas/db/services';
+import {
+  createDbTemplateStore,
+  createRedisCache,
+  markUpdateProcessed,
+  prismaExecutor,
+} from '@tas/db/services';
 import { buildServer, type ComponentState } from './server.js';
 import { registerWebhookRoute } from './webhook.js';
 import { UpdatePipeline, type BotLogger } from './pipeline.js';
 import { createBot, createTransport } from './telegram.js';
 import { registerBotHandlers } from './handlers.js';
-import { createDbTemplateStore } from './templates.js';
-import { OutboxSender } from './outboxSender.js';
 import type { Update } from 'grammy/types';
 
 loadRootEnv();
@@ -85,11 +88,6 @@ async function main(): Promise<void> {
     botLogger,
   );
 
-  const sender = new OutboxSender(
-    { executor, transport, log: botLogger },
-    { perChatIntervalMs: 1000, batchSize: 10 },
-  );
-
   const app = await buildServer({
     checks: {
       db: dbCheck,
@@ -106,13 +104,12 @@ async function main(): Promise<void> {
   });
 
   // AN-10: в prod наружу только 443 через Caddy; bot:4100 — внутренняя сеть.
+  // M6: отправка переехала в apps/worker (BullMQ); бот только пишет в outbox.
   await app.listen({ port: env.BOT_PORT, host: '0.0.0.0' });
-  sender.start(250);
-  app.log.info({ bot: env.TELEGRAM_BOT_USERNAME }, 'bot service started');
+  app.log.info({ bot: env.TELEGRAM_BOT_USERNAME }, 'bot service started (webhook-only)');
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'graceful shutdown');
-    sender.stop();
     // ждём завершения in-flight update (bounded), затем закрываемся
     await Promise.race([pipeline.idle(), new Promise((resolve) => setTimeout(resolve, 5000))]);
     await app.close();

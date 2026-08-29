@@ -128,3 +128,72 @@ export async function skipAllOutboxForUser(executor: SqlExecutor, userId: string
     [userId],
   );
 }
+
+/**
+ * Дневной cap автоматических сообщений (§13.2: ≤1/день на пользователя,
+ * транзакционные не считаются). Граница дня — UTC.
+ */
+export async function countSentToday(executor: SqlExecutor, userId: string): Promise<number> {
+  const result = await executor.query(
+    `SELECT count(*)::int AS n FROM messages_outbox
+     WHERE user_id = $1 AND status = 'sent'
+       AND kind IN ('flow','broadcast')
+       AND sent_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+    [userId],
+  );
+  return Number((result.rows[0] as { n: number } | undefined)?.n ?? 0);
+}
+
+/**
+ * Восстановление после падения worker'а: строки, застрявшие в 'sending'
+ * (захват без отправки), возвращаются в pending. Вызывается на старте воркера
+ * — он единственный отправитель, поэтому безопасно без признака владельца.
+ */
+export async function resetStaleSending(executor: SqlExecutor): Promise<number> {
+  return executor.execute(`UPDATE messages_outbox SET status = 'pending' WHERE status = 'sending'`, []);
+}
+
+/** Последняя отправка в чат (для пейсинга 1/s на чат после рестарта). */
+export async function lastSentAtForChat(
+  executor: SqlExecutor,
+  chatId: string,
+): Promise<Date | null> {
+  const result = await executor.query(
+    `SELECT max(sent_at) AS last FROM messages_outbox
+     WHERE payload->>'chat_id' = $1 AND sent_at > now() - interval '2 minutes'`,
+    [chatId],
+  );
+  const row = result.rows[0] as { last: Date | string | null } | undefined;
+  if (!row || row.last === null) return null;
+  return row.last instanceof Date ? row.last : new Date(row.last);
+}
+
+/** Свежая строка outbox по id (процессор проверяет статус перед отправкой). */
+export async function getOutboxRow(executor: SqlExecutor, id: string): Promise<OutboxRow | null> {
+  const result = await executor.query(
+    `SELECT id, user_id, kind, template_code, payload FROM messages_outbox WHERE id = $1`,
+    [id],
+  );
+  const row = result.rows[0] as
+    | { id: string | bigint; user_id: string | bigint; kind: OutboxKind; template_code: string | null; payload: Record<string, unknown> }
+    | undefined;
+  return row
+    ? {
+        id: String(row.id),
+        user_id: String(row.user_id),
+        kind: row.kind,
+        template_code: row.template_code,
+        payload: row.payload,
+      }
+    : null;
+}
+
+/** Текущий статус строки (процессор пропускает уже решённые). */
+export async function getOutboxStatus(
+  executor: SqlExecutor,
+  id: string,
+): Promise<string | null> {
+  const result = await executor.query(`SELECT status FROM messages_outbox WHERE id = $1`, [id]);
+  const row = result.rows[0] as { status: string } | undefined;
+  return row?.status ?? null;
+}

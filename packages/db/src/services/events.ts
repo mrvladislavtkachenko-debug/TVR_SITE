@@ -56,3 +56,16 @@ export async function recordEvents(
 export function ipHash(ip: string, salt: string): string {
   return createHash('sha256').update(`${salt}:${ip}`, 'utf8').digest('hex');
 }
+
+/** Счётчик событий пользователя за окно (для conditions/guard §13.1). */
+export async function countUserEvents(
+  deps: { executor: SqlExecutor },
+  input: { userId: string; name: string; hours: number },
+): Promise<number> {
+  const result = await deps.executor.query(
+    `SELECT count(*)::int AS n FROM events
+     WHERE user_id = $1 AND name = $2 AND occurred_at >= now() - make_interval(hours => $3)`,
+    [input.userId, input.name, input.hours],
+  );
+  return Number((result.rows[0] as { n: number } | undefined)?.n ?? 0);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createShutdownSignal, startWorker } from '../src/index.js';
+import { createShutdownSignal, startWorker } from '../src/runtime.js';
 
 describe('worker shutdown', () => {
   it('startWorker резолвится по stop() и вызывает onShutdown', async () => {

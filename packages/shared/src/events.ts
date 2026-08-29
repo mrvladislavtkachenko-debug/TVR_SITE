@@ -124,11 +124,42 @@ export const userStateChangedPropsSchema = z.object({
   to: z.string().min(1).max(32),
 });
 
+export const userActivatedPropsSchema = z.object({ days_since_start: z.number().int().min(0) });
+
+export const reengagedPropsSchema = z.object({ days_silent: z.number().int().min(0) });
+
+export const automationMessageSentPropsSchema = z.object({
+  flow_code: z.string().min(1).max(64),
+  step: z.number().int().min(0),
+  template_code: z.string().min(1).max(64),
+});
+
+export const contentViewedPropsSchema = z.object({
+  content_code: z.string().min(1).max(64),
+  position: z.number().int().min(0).optional(),
+});
+
+export const productViewedPropsSchema = z.object({ product_code: z.string().min(1).max(64) });
+
+export const checkoutOpenedPropsSchema = z.object({
+  product_code: z.string().min(1).max(64),
+  stars_amount: z.number().int().min(1),
+});
+
+export const purchaseCompletedPropsSchema = z.object({
+  order_id: z.string().min(1).max(64),
+  product_code: z.string().min(1).max(64),
+  stars_amount: z.number().int().min(1),
+  usd_equiv: z.number().min(0),
+});
+
+export const leadCreatedPropsSchema = z.object({ email_hash: z.string().min(16).max(128) });
+
 export const feedbackSubmittedPropsSchema = z.object({ score: z.number().int().min(0).max(1) });
 
 export const supportRequestedPropsSchema = z.object({}).strict();
 
-/** Реестр схем properties событий, эмитируемых ботом (M5). */
+/** Реестр схем properties всех событий MVP (§16.2), эмитируемых кодом. */
 export const botEventPropsSchemas = {
   telegram_start: telegramStartPropsSchema,
   onboarding_started: onboardingStartedPropsSchema,
@@ -142,6 +173,14 @@ export const botEventPropsSchemas = {
   unsubscribe: unsubscribePropsSchema,
   bot_blocked: botBlockedPropsSchema,
   user_state_changed: userStateChangedPropsSchema,
+  user_activated: userActivatedPropsSchema,
+  reengaged: reengagedPropsSchema,
+  automation_message_sent: automationMessageSentPropsSchema,
+  content_viewed: contentViewedPropsSchema,
+  product_viewed: productViewedPropsSchema,
+  checkout_opened: checkoutOpenedPropsSchema,
+  purchase_completed: purchaseCompletedPropsSchema,
+  lead_created: leadCreatedPropsSchema,
   feedback_submitted: feedbackSubmittedPropsSchema,
   support_requested: supportRequestedPropsSchema,
 } as const;

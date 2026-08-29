@@ -150,3 +150,35 @@ live-прогоном M5 против реального PG). Решение: с
 с чужого текущего last; стейтмент 2 — CTE с вставками first/last
 (`ON CONFLICT DO NOTHING`). Гонка разных токенов одного юзера: проигравший
 гасится DO NOTHING (побеждает первый writer; история — в events).
+
+## AN-25 — M6: миграция отправителя bot → worker (2026-08-29)
+
+Исходящие сообщения теперь отправляет только `apps/worker` (BullMQ-воркер
+`tas-outbox`): из бота удалены `outboxSender.ts` и `emit.ts`, бот —
+webhook-only (пишет в `messages_outbox`/`flow_runs`/`events`, единственный
+прямой вызов Bot API — эфемерный UI-ack с `canUseWebhookReply:false`).
+`senderCore.ts` (пейсинг ≤1 msg/chat, 403/429-каскады, dedup) переехал в
+`apps/worker/src/senderCore.ts` без изменений семантики; HTTP-транспорт —
+`apps/worker/src/telegram.ts` (fetch, без grammY). Правило M5 сохранено:
+любая исходящая доставка — только через `messages_outbox` (§11.1).
+
+## AN-26 — пейсинг 1 msg/s на чат без BullMQ groups (2026-08-29)
+
+BullMQ OSS не имеет rate-limit-групп per chat, а PRD требует ≤1 msg/s на чат
+(§24/внешний факт TG). Решение: (а) глобальный потолок — BullMQ `limiter
+{max:25, duration:1000}` + `Worker.concurrency 5` на очереди `tas-outbox`;
+(б) пер-чатовый интервал — при планировании джобы сканер вычисляет
+`max(now, last_sent_at(chat) + 1s)` и кладёт её в очередь с `delay` (джоба
+физически ждёт в Redis); `last_sent_at` берётся из последней sent-строки
+outbox чата. Итог: одна джоба — один чат, межсообщенческий интервал
+гарантирован моментом добавления, доставка — не раньше delay.
+
+## AN-27 — guard repeat_days в startFlowRun (§13.1) (2026-08-29)
+
+`repeat_days` у seed-флоу winback трактуется как запрет НОВОГО прогона, пока
+с прошлого запуска того же флоу не прошло N дней: `startFlowRun` проверяет
+(1) `active_exists` — активный прогон не дублируется, затем (2)
+`recent_run_within(repeat_days)` — слишком свежий завершённый прогон отклоняет
+старт (`skipped: repeat_guard`). Активный прогон всегда важнее repeat_guard
+(иначе 30-дневный флоу блокировал бы собственное продолжение). Repeat guard
+не действует на уже идущий прогон: шаги идут по расписанию независимо.

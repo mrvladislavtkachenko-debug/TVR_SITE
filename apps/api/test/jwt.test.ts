@@ -48,4 +48,14 @@ describe('HS256 JWT (без внешних зависимостей, TD-007)', (
     expect(() => verifyJwt('abc', SECRET)).toThrow(/malformed/);
     expect(() => verifyJwt('a.b.c.d', SECRET)).toThrow(/malformed/);
   });
+
+  it('TD-007 (M6): role валидируется против enum — role:"admin" отклоняется', () => {
+    const forged = signJwt(
+      { sub: '1', role: 'admin', email: 'x@example.com' } as unknown as Parameters<typeof signJwt>[0],
+      SECRET,
+    );
+    expect(() => verifyJwt(forged, SECRET)).toThrowError(JwtError);
+    const valid = signJwt({ sub: '1', role: 'viewer', email: 'x@example.com' }, SECRET);
+    expect(verifyJwt(valid, SECRET).role).toBe('viewer');
+  });
 });

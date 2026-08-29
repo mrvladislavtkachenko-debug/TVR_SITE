@@ -326,3 +326,100 @@ export async function removeSegmentMembership(
     [userId, segmentId],
   );
 }
+
+/** Минимальный снимок пользователя для flow-движка и cron. */
+export interface UserFactsRow {
+  id: string;
+  telegram_id: string;
+  first_name: string | null;
+  is_blocked: boolean;
+  last_activity_at: Date;
+  lifecycle_state: string | null;
+  message_frequency: 'normal' | 'low' | null;
+  locale: string | null;
+  interest_segment_code: string | null;
+}
+
+export async function getUserFacts(executor: SqlExecutor, userId: string): Promise<UserFactsRow | null> {
+  const result = await executor.query(
+    `SELECT u.id, u.telegram_id, u.first_name, u.is_blocked, u.last_activity_at, u.locale,
+            p.lifecycle_state, p.message_frequency, s.code AS interest_segment_code
+     FROM users u
+     LEFT JOIN user_profiles p ON p.user_id = u.id
+     LEFT JOIN segments s ON s.id = p.interest_segment_id
+     WHERE u.id = $1`,
+    [userId],
+  );
+  const r = result.rows[0] as
+    | {
+        id: string | bigint;
+        telegram_id: string | bigint;
+        first_name: string | null;
+        is_blocked: boolean;
+        last_activity_at: Date | string;
+        locale: string | null;
+        lifecycle_state: string | null;
+        message_frequency: 'normal' | 'low' | null;
+        interest_segment_code: string | null;
+      }
+    | undefined;
+  if (!r) return null;
+  return {
+    id: String(r.id),
+    telegram_id: String(r.telegram_id),
+    first_name: r.first_name,
+    is_blocked: Boolean(r.is_blocked),
+    last_activity_at: r.last_activity_at instanceof Date ? r.last_activity_at : new Date(r.last_activity_at),
+    locale: r.locale,
+    lifecycle_state: r.lifecycle_state,
+    message_frequency: r.message_frequency,
+    interest_segment_code: r.interest_segment_code,
+  };
+}
+
+/** chat_id для отправки пользователю = telegram_id (private-чаты). */
+export async function getChatIdForUser(executor: SqlExecutor, userId: string): Promise<string | null> {
+  const result = await executor.query(`SELECT telegram_id::text AS chat FROM users WHERE id = $1`, [userId]);
+  const row = result.rows[0] as { chat: string } | undefined;
+  return row?.chat ?? null;
+}
+
+/** Коды активных сегментов пользователя (для conditions/guard §13.1). */
+export async function getUserSegmentCodes(executor: SqlExecutor, userId: string): Promise<string[]> {
+  const result = await executor.query(
+    `SELECT s.code FROM user_segments us JOIN segments s ON s.id = us.segment_id
+     WHERE us.user_id = $1 AND us.removed_at IS NULL`,
+    [userId],
+  );
+  return (result.rows as { code: string }[]).map((r) => r.code);
+}
+
+/**
+ * set_profile_field с whitelist (§13.1): из флоу допустимо менять только
+ * message_frequency и timezone (lifecycle — управляется переходами, не флоу).
+ */
+export async function setProfileFieldWhitelisted(
+  executor: SqlExecutor,
+  userId: string,
+  field: string,
+  value: unknown,
+): Promise<boolean> {
+  if (field === 'message_frequency' && (value === 'normal' || value === 'low')) {
+    await setMessageFrequency(executor, userId, value);
+    return true;
+  }
+  if (field === 'timezone' && typeof value === 'string' && value.length <= 64) {
+    await executor.execute(`UPDATE user_profiles SET timezone = $2 WHERE user_id = $1`, [userId, value]);
+    return true;
+  }
+  return false;
+}
+
+/** Зафиксировать момент активации (§11.5 activated_at). */
+export async function touchActivatedAt(executor: SqlExecutor, userId: string): Promise<void> {
+  await executor.execute(
+    `UPDATE user_profiles SET activated_at = now()
+     WHERE user_id = $1 AND activated_at IS NULL`,
+    [userId],
+  );
+}

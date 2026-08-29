@@ -1,7 +1,7 @@
 import type { Update } from 'grammy/types';
 import type { Bot } from 'grammy';
 import type { SqlExecutor } from '@tas/db/services';
-import type { BotTemplate, TemplateStore } from '../../src/templates.js';
+import type { BotTemplate, TemplateStore } from '@tas/db/services';
 import type { TelegramTransport } from '../../src/telegram.js';
 import { createBot } from '../../src/telegram.js';
 import type { TelegramApiError } from '../../src/telegram.js';

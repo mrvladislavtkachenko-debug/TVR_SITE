@@ -1,5 +1,5 @@
 import type { SqlExecutor } from '@tas/db/services';
-import type { BotTemplate } from '../../src/templates.js';
+import type { BotTemplate } from '@tas/db/services';
 
 /**
  * Hermetic fake-БД для тестов бота (паттерн M4): маршрутизация по SQL-шаблонам,
@@ -14,6 +14,7 @@ interface UserRow {
   locale: string | null;
   is_blocked: boolean;
   blocked_at: Date | null;
+  first_seen_at: Date;
 }
 
 interface ProfileRow {
@@ -111,7 +112,8 @@ export class FakeBotDb {
   }
 
   // ------------------------------------------------------------- маршрутизатор
-  private query(sql: string, params: unknown[]): { rows: Record<string, unknown>[]; rowCount: number } {
+  // protected: apps/worker/test расширяет фейк своими SQL-ветками (M6)
+  protected query(sql: string, params: unknown[]): { rows: Record<string, unknown>[]; rowCount: number } {
     // users: upsert по telegram_id (§28.1/28.4); is_blocked не трогаем
     if (sql.includes('INSERT INTO users') && sql.includes('ON CONFLICT (telegram_id)')) {
       const [telegramId, username, firstName, locale] = params as (string | null | undefined)[];
@@ -134,6 +136,7 @@ export class FakeBotDb {
         locale: loc,
         is_blocked: false,
         blocked_at: null,
+        first_seen_at: new Date(),
       });
       return { rows: [{ id, inserted: true }], rowCount: 1 };
     }

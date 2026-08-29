@@ -99,7 +99,10 @@ export const botEnvSchema = baseEnvSchema.extend({
 export type BotEnv = z.infer<typeof botEnvSchema>;
 
 /** apps/worker: BullMQ (M6). */
-export const workerEnvSchema = baseEnvSchema;
+export const workerEnvSchema = baseEnvSchema.extend({
+  /** Только внутренний health/metrics-endpoint воркера (AN-10: наружу не публикуется). */
+  WORKER_PORT: z.coerce.number().int().min(1).max(65535).default(4200),
+});
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
 

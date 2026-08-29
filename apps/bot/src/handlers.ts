@@ -3,6 +3,12 @@ import type { TokenFormat } from '@tas/shared';
 import { messageLengthBucket } from '@tas/shared';
 import type { KvCache } from '@tas/db/services';
 import {
+  emitBotEvents,
+  renderTemplate,
+  type BotEventSpec as BotEventInput,
+  type TemplateStore,
+} from '@tas/db/services';
+import {
   addSegmentMembership,
   cancelActiveFlowRuns,
   completeOnboarding,
@@ -23,7 +29,7 @@ import {
   type OutboxKind,
   type SqlExecutor,
 } from '@tas/db/services';
-import { emitBotEvents, type BotEventInput } from './emit.js';
+
 import {
   CALLBACK,
   FSM_HINT_LIMIT,
@@ -33,7 +39,6 @@ import {
   isOnboardingNode,
 } from './fsm.js';
 import type { BotLogger } from './pipeline.js';
-import { renderTemplate, type TemplateStore } from './templates.js';
 import type { TelegramTransport, TgButton } from './telegram.js';
 
 /**

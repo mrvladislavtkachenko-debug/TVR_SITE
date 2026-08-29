@@ -66,6 +66,9 @@
   дают 403 на всех защищённых роутах. Прямой exploit требует секрета JWT.
 - **План:** добавить zod-проверку role в verifyJwt (+ тест на role:'admin') при
   первом касании auth-кода (M6+ / hardening-проход).
+- **Статус:** ЗАКРЫТО в M6 (2026-08-29): verifyJwt валидирует role по enum
+  ADMIN_ROLES = ['owner','editor','viewer']; тест на подданную роль 'admin'
+  (`apps/api/test/jwt.test.ts`) — 401.
 
 ## TD-009 (опционально, владелец) — dummy-argon2-verify при неизвестном email
 - **Что:** при неизвестном email login отвечает 401 сразу после SELECT, не делая
@@ -82,3 +85,17 @@
 - **Нужно:** пакет `@aws-sdk/client-s3` (вне §20) ИЛИ presigned-URL'ы. Запрос
   одобрения владельца; при одобрении — реализация в M6+ без смены контракта
   (delivery_kind: 'file' | 'link' уже в схеме события).
+
+## TD-011 — два Bot API-клиента: grammY (bot) и fetch-транспорт (worker)
+- **Что:** после миграции отправителя в worker (AN-25) в репозитории два
+  независимых клиента Bot API: grammY-инстанс в `apps/bot` (только inbound
+  webhook + эфемерный ack) и fetch-транспорт `apps/worker/src/telegram.ts`
+  (все исходящие). 429/timeout-семантика дублируется в двух местах.
+- **Почему оставлено:** worker намеренно без grammY-стека (никаких
+  middleware/сессий — только sendMessage по HTTP из senderCore); боту grammY
+  нужна для webhook-конвейера. Свести к одному клиенту = тащить grammY в
+  worker или писать свой webhook-слой — оба варианта дороже дублирования.
+- **План:** пересмотреть при M10 (deploy/hardening): вынести transport в
+  `packages/shared` либо перейти на grammY в worker, если появится
+  потребность в других методах Bot API.
+- **Статус:** принято в рамках M6 (2026-08-29).

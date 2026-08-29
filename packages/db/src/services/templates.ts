@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import type { SqlExecutor } from '@tas/db/services';
-import type { TgButton } from './telegram.js';
+import type { SqlExecutor } from './sql.js';
 
 /**
  * Шаблоны сообщений (§39.7: все ответы бота — из message_templates).
@@ -9,7 +8,8 @@ import type { TgButton } from './telegram.js';
 
 export interface BotTemplate {
   body: string;
-  buttons: TgButton[] | null;
+  /** Кнопки шаблона в транспортно-независимом формате {text, callbackData}. */
+  buttons: { text: string; callbackData: string }[] | null;
 }
 
 export interface TemplateStore {
@@ -23,7 +23,7 @@ const templateButtonSchema = z.object({
 });
 
 /** Валидация кнопок шаблона; некорректный шаблон → null (бот ответит без кнопок). */
-export function templateButtons(raw: unknown): TgButton[] | null {
+export function templateButtons(raw: unknown): { text: string; callbackData: string }[] | null {
   if (raw === null || raw === undefined) return null;
   const parsed = z.array(templateButtonSchema).safeParse(raw);
   if (!parsed.success || parsed.data.length === 0) return null;

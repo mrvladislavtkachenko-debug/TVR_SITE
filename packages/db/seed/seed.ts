@@ -6,6 +6,7 @@
  */
 import { dbEnvSchema, loadRootEnv, parseEnv } from '@tas/shared';
 import { createPrisma } from '../src/client.js';
+import { SEED_FLOWS as FLOWS } from './flowDefinitions.js';
 
 loadRootEnv();
 const env = parseEnv(dbEnvSchema);
@@ -18,76 +19,44 @@ const SOURCES = [
   { code: 'telegram_organic', name: 'Telegram (поиск/шеринг)' },
 ];
 
-// --- 2. сегменты S1–S4 (§6.2) + служебный 'unsubscribed' (M5: /stop) -------
-const SEGMENTS = [
+// --- 2. сегменты S1–S4 (§6.2) + служебные/динамические (M5/M6) -----------
+const SEGMENTS: {
+  code: string;
+  name: string;
+  kind?: 'static' | 'dynamic';
+  rule_json?: unknown;
+}[] = [
   { code: 'S1', name: 'Планировщица — рутины и порядок' },
   { code: 'S2', name: 'Начинающая самостоятельная — переходы/первый опыт' },
   { code: 'S3', name: 'Микро-предприниматель — шаблоны и процессы' },
   { code: 'S4', name: 'Саморазвитие — привычки и мотивация' },
   // M5 (§11.2 /stop, §13.1 guard 'unsubscribed'): материализация отписки
   { code: 'unsubscribed', name: 'Отписался (/stop) — не писать первым' },
-];
-
-// --- 3. три флоу §13.2 (определения §13.1; интерпретатор — M6) --------------
-const FLOWS: { code: string; definition: unknown }[] = [
+  // M6 (§12.2): динамические правила — cron-пересчёт раз в час (apps/worker)
   {
-    code: 'welcome_series_v1',
-    definition: {
-      trigger: { type: 'event', event: 'onboarding_completed' },
-      conditions: [],
-      steps: [
-        { action: 'send_message', template: 'ws_value_1', delay_hours: 24 },
-        { action: 'send_message', template: 'ws_value_2', delay_hours: 48 },
-        {
-          action: 'send_message',
-          template: 'ws_offer_planner',
-          delay_hours: 72,
-          buttons: [{ text: 'Get Planner Pack', type: 'stars_invoice', product: 'planner_pack' }],
-        },
-        {
-          branch: {
-            if: 'event(purchase_completed) within 72h',
-            then: 'goto(post_purchase_v1)',
-            else: 'goto(checkout_abandonment_v1)',
-          },
-        },
+    code: 'intent_high',
+    name: 'Открыл checkout, не купил 48h',
+    kind: 'dynamic',
+    rule_json: {
+      match: 'all',
+      rules: [
+        { event: 'checkout_opened', op: 'gte', count: 1, within_hours: 48 },
+        { event: 'purchase_completed', op: 'lte', count: 0, within_hours: 48 },
       ],
-      guard: { cancel_if: ['user_blocked', 'unsubscribed', 'purchased_product'] },
     },
   },
   {
-    code: 'checkout_abandonment_v1',
-    definition: {
-      trigger: { type: 'event', event: 'checkout_opened' },
-      conditions: [{ expr: 'no event(purchase_completed) within 48h' }],
-      steps: [
-        { action: 'send_message', template: 'ca_objection_1', delay_hours: 24 },
-        { action: 'send_message', template: 'ca_bonus_2', delay_hours: 72 },
-      ],
-      guard: { cancel_if: ['user_blocked', 'unsubscribed', 'purchased_product'] },
-    },
-  },
-  {
-    code: 'winback_v1',
-    definition: {
-      trigger: { type: 'state_changed', to: 'at_risk' },
-      conditions: [],
-      steps: [
-        {
-          action: 'send_message',
-          template: 'wb_reengage',
-          delay_hours: 0,
-          buttons: [
-            { text: 'Да, давай', type: 'callback', data: 'wb:yes' },
-            { text: 'Отписаться', type: 'callback', data: 'wb:unsubscribe' },
-          ],
-        },
-      ],
-      guard: { cancel_if: ['user_blocked', 'unsubscribed'] },
+    code: 'cold',
+    name: '0 content_viewed за 7 дней',
+    kind: 'dynamic',
+    rule_json: {
+      match: 'all',
+      rules: [{ event: 'content_viewed', op: 'lte', count: 0, within_hours: 168 }],
     },
   },
 ];
 
+// --- 3. флоу: определения в ./flowDefinitions.ts (общие с тестами) -----
 // --- 4. en-шаблоны для флоу (message_templates) ------------------------------
 const MENU_BUTTONS = [
   { text: '📚 Получить чек-лист', type: 'callback', data: 'lm:again' },
@@ -204,8 +173,16 @@ async function main(): Promise<void> {
   for (const seg of SEGMENTS) {
     await prisma.segments.upsert({
       where: { code: seg.code },
-      update: { name: seg.name },
-      create: { code: seg.code, name: seg.name, kind: 'static' },
+      update: {
+        name: seg.name,
+        ...(seg.kind === 'dynamic' ? { rule_json: seg.rule_json as never } : {}),
+      },
+      create: {
+        code: seg.code,
+        name: seg.name,
+        kind: seg.kind ?? 'static',
+        ...(seg.kind === 'dynamic' ? { rule_json: seg.rule_json as never } : {}),
+      },
     });
   }
   console.log(`segments: ${SEGMENTS.length} ok`);
