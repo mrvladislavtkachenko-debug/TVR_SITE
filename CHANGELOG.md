@@ -94,3 +94,33 @@ M3 — атрибуция: tracking_links (t1+nanoid(10)), резолв с кэ�
 
 ### Дальше
 M4 — API: контракты §19 (admin-эндпоинты), zod-валидация, Idempotency-Key, RBAC + audit.
+
+## M4 — Admin API + Security (2026-08-29)
+
+### Что сделано
+- **XSS-фикс 12aa9d5 (владелец) извлечён**: `jsonForScript` → `@tas/shared` (экранирование `<`,
+  U+2028/2029) + юнит-тесты; bridge использует общий хелпер.
+- **Харднинг**: (1) `POST /api/v1/events` публично принимает только `telegram_click`
+  (link_click/bridge_view → 403, AN-19); (2) dev-rewrite `/api/v1/*` → API_ORIGIN в next.config;
+  (3) `IP_HASH_SALT` отдельным env (ротация ENCRYPTION_KEY не меняет хэши IP).
+- **Auth (§22)**: HS256 JWT (15 мин, свой impl — AN-18/TD-007), login: argon2id + TOTP
+  (AES-GCM расшифровка), lockout 5×15мин/email, rate limit 20×15мин/IP, единый 401 без
+  enumerate, audit admin_login/admin_login_failed.
+- **RBAC owner/editor/viewer**: preHandler на роутере + assertRole в сервисном слое (в глубину).
+- **Эндпоинты**: login, me, tracking-links POST (издатель ссылок: short_code + pin-URL + tg-deep-link;
+  Idempotency-Key → replay с заголовком) / GET (со счётчиками link_click/starts), pins GET/POST/PATCH
+  (переходы idea→approved→scheduled→published, paused↔published), users GET/GET/:id (карточка:
+  атрибуция/сегменты/события), openapi.json. Скоуп M4 — AN-20 (analytics/flows/broadcasts — M6+).
+- **Audit** на каждое действие; **zod** на всех входах; единый error envelope.
+- **OpenAPI 3.1** `apps/api/openapi.json` + GET /api/v1/openapi.json + drift-тест (paths ⊆ app).
+
+### Как проверено
+- 116/116 тестов (jwt tamper/exp/alg-none, lockout, idempotency replay, login-флоу с реальными
+  argon2/AES-GCM на fake-БД, RBAC 401/403, переходы статусов, 403 events, openapi drift).
+- Живой прогон против реального PG: login 401/200 → /me → tracking-links 201 → replay (same
+  short_code, Idempotency-Replayed:true) → GET → pins 201/422/200 → users list/card → openapi
+  (9 путей) → audit-след (5 действий) → RBAC viewer 403.
+
+### Дальше
+M5 — бот: webhook + secret_token, идемпотентность update_id, upsert users, онбординг-FSM §11.4,
+лид-магнит, меню, /stop, обработка блокировки.

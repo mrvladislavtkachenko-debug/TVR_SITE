@@ -41,3 +41,8 @@
 - **M3-дополнение:** заглушка живёт в `node_modules/.pnpm/@prisma+client@*/node_modules/.prisma/client/`
   (именно туда резолвится bare-спецификатор `.prisma/client/default`); ЛЮБОЙ `pnpm install` затирает её —
   пересоздавать (скрипт-инструкция в AN-17/runbooks M10). Установка в песочнице: `pnpm install --ignore-scripts`.
+
+## TD-007 — собственный HS256 JWT вместо jsonwebtoken
+- **Что:** jwt.ts (~60 строк): HS256, обязательный exp, timingSafeEqual, отказ от alg≠HS256.
+- **Почему ок:** меньше зависимостей (правило M4), поверхность мала, покрыта тестами (roundtrip/tamper/exp/alg-none).
+- **Когда закрыть:** по желанию владельца — заменить на `jsonwebtoken` без смены сигнатур (AN-18).

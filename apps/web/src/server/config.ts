@@ -9,6 +9,7 @@ export interface WebServerConfig {
   redisUrl: string;
   botUsername: string;
   encryptionKey: string;
+  ipHashSalt: string;
   tokenFormat: TokenFormat;
 }
 
@@ -23,6 +24,7 @@ export function getServerConfig(): WebServerConfig {
       redisUrl: env.REDIS_URL,
       botUsername: env.TELEGRAM_BOT_USERNAME,
       encryptionKey: env.ENCRYPTION_KEY,
+      ipHashSalt: env.IP_HASH_SALT,
       tokenFormat: { prefix: env.ATTRIBUTION_TOKEN_PREFIX, length: env.NANOID_LEN },
     };
   }

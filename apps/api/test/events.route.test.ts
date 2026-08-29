@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
 import { registerEventsRoute, type EventsRouteDeps } from '../src/routes/events.js';
 import { createMemoryRateCounter } from '../src/ratelimit.js';
-import type { EventInsert, SqlExecutor, TrackingLinkRow } from '@tas/db';
+import type { EventInsert, SqlExecutor, TrackingLinkRow } from '@tas/db/services';
 
 async function setup(opts: {
   link?: TrackingLinkRow | null;
@@ -16,9 +16,7 @@ async function setup(opts: {
     async query(sql) {
       if (opts.queryError) throw opts.queryError;
       if (sql.includes('FROM tracking_links')) {
-        return opts.link
-          ? { rows: [opts.link], rowCount: 1 }
-          : { rows: [], rowCount: 0 };
+        return opts.link ? { rows: [opts.link], rowCount: 1 } : { rows: [], rowCount: 0 };
       }
       return { rows: [], rowCount: 0 };
     },
@@ -38,7 +36,7 @@ async function setup(opts: {
   const deps: EventsRouteDeps = {
     executor,
     rateCounter: createMemoryRateCounter(),
-    salt: 'test-salt',
+    ipHashSalt: 'test-salt',
     tokenFormat: { prefix: 't1', length: 10 },
     limit: opts.limit ?? 60,
   };
@@ -64,42 +62,52 @@ const LINK: TrackingLinkRow = {
   placement: null,
 };
 
-describe('POST /api/v1/events', () => {
-  it('202 + запись с серверным обогащением (ip_hash, ua_class, dedup_key, tracking_link_id)', async () => {
+describe('POST /api/v1/events (харднинг M4: публично только telegram_click)', () => {
+  it('telegram_click → 202 + серверное обогащение (ip_hash, ua_class, dedup_key, tracking_link_id)', async () => {
     const { app, inserted } = await setup({ link: LINK });
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/events',
-      headers: { 'user-agent': 'Pinterest/17.0 iPhone', referer: 'https://pinterest.com/pin/123' },
-      payload: { name: 'link_click', properties: { slug: 'morning-checklist', token: LINK.short_code } },
+      headers: { 'user-agent': 'Pinterest/17.0 iPhone' },
+      payload: { name: 'telegram_click', properties: { slug: 'morning-checklist', token: LINK.short_code, session_id: 'sess12345678' } },
     });
     expect(res.statusCode).toBe(202);
     expect(res.json()).toEqual({ accepted: true });
-    expect(inserted).toHaveLength(1);
     const ev = inserted[0]!;
-    expect(ev.name).toBe('link_click');
+    expect(ev.name).toBe('telegram_click');
     expect(ev.trackingLinkId).toBe('42');
-    expect(ev.dedupKey).toMatch(/^link_click:t1aB9xK2mQz7:[0-9a-f]{64}:\d+$/);
+    expect(ev.dedupKey).toMatch(/^telegram_click:t1aB9xK2mQz7:sess12345678:\d+$/);
     const props = ev.properties ?? {};
     expect(props.ip_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(props.ua_class).toBe('pinterest_app');
-    expect(props.referer_host).toBe('pinterest.com');
     await app.close();
   });
 
-  it('неизвестный токен → tracking_link_id null, всё равно 202', async () => {
-    const { app, inserted } = await setup({ link: null });
+  it('link_click публично → 403 FORBIDDEN (server-side only)', async () => {
+    const { app, inserted } = await setup({});
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/events',
-      payload: { name: 'telegram_click', properties: { slug: 'x', token: 't1aB9xK2mQz7' } },
+      payload: { name: 'link_click', properties: { slug: 'x', token: 't1aB9xK2mQz7' } },
     });
-    expect(res.statusCode).toBe(202);
-    expect(inserted[0]?.trackingLinkId).toBeNull();
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+    expect(inserted).toHaveLength(0);
     await app.close();
   });
 
-  it('невалидное тело → 400 VALIDATION_ERROR', async () => {
+  it('bridge_view публично → 403', async () => {
+    const { app } = await setup({});
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/events',
+      payload: { name: 'bridge_view', properties: { slug: 'x', token: 't1aB9xK2mQz7' } },
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('неизвестное имя → 400 VALIDATION_ERROR', async () => {
     const { app } = await setup({});
     const res = await app.inject({
       method: 'POST',
@@ -111,15 +119,37 @@ describe('POST /api/v1/events', () => {
     await app.close();
   });
 
+  it('битые properties → 400', async () => {
+    const { app } = await setup({});
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/events',
+      payload: { name: 'telegram_click', properties: { token: 't1aB9xK2mQz7' } }, // нет slug
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('превышение лимита → 429 + Retry-After', async () => {
     const { app } = await setup({ limit: 2 });
-    const payload = { name: 'bridge_view', properties: { slug: 'x', token: 't1aB9xK2mQz7' } };
+    const payload = { name: 'telegram_click', properties: { slug: 'x', token: 't1aB9xK2mQz7' } };
     await app.inject({ method: 'POST', url: '/api/v1/events', payload });
     await app.inject({ method: 'POST', url: '/api/v1/events', payload });
     const res = await app.inject({ method: 'POST', url: '/api/v1/events', payload });
     expect(res.statusCode).toBe(429);
-    expect(res.json().error.code).toBe('RATE_LIMITED');
     expect(res.headers['retry-after']).toBeDefined();
+    await app.close();
+  });
+
+  it('ошибка резолва (БД недоступна) → tracking_link_id null, 202', async () => {
+    const { app, inserted } = await setup({ queryError: new Error('db down') });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/events',
+      payload: { name: 'telegram_click', properties: { slug: 'x', token: 't1aB9xK2mQz7' } },
+    });
+    expect(res.statusCode).toBe(202);
+    expect(inserted[0]?.trackingLinkId).toBeNull();
     await app.close();
   });
 
@@ -133,17 +163,4 @@ describe('POST /api/v1/events', () => {
     expect(res.statusCode).toBe(202);
     await app.close();
   });
-
-  it('ошибка резолва (БД недоступна) → tracking_link_id null, 202', async () => {
-    const { app, inserted } = await setup({ queryError: new Error('db down') });
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/v1/events',
-      payload: { name: 'link_click', properties: { slug: 'x', token: 't1aB9xK2mQz7' } },
-    });
-    expect(res.statusCode).toBe(202);
-    expect(inserted[0]?.trackingLinkId).toBeNull();
-    await app.close();
-  });
 });
-

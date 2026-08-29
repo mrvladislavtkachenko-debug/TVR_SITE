@@ -44,6 +44,8 @@ export const baseEnvSchema = z.object({
   JWT_TTL: z.string().default('15m'),
   /** Э6: AES-256-GCM ключ (openssl rand -base64 32) для TOTP-секретов. */
   ENCRYPTION_KEY: z.string().min(32, 'ENCRYPTION_KEY: минимум 32 символа'),
+  /** Отдельная соль ip_hash: ротация ENCRYPTION_KEY не меняет хэши IP. */
+  IP_HASH_SALT: z.string().min(16, 'IP_HASH_SALT: минимум 16 символов'),
 
   // Attribution (формат токена менять нельзя — ссылки живут в опубликованных пинах)
   ATTRIBUTION_TOKEN_PREFIX: z

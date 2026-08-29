@@ -6,6 +6,7 @@ import {
   classifyUaClass,
   epochMinuteOf,
   isTrackingToken,
+  jsonForScript,
   telegramDeepLink,
 } from '@tas/shared';
 import {
@@ -33,17 +34,6 @@ interface LandingContent {
   headline: string;
   bullets: string[];
   ctaText: string;
-}
-
-/**
- * JSON для встраивания в inline-<script>: JSON.stringify НЕ экранирует `<`,
- * поэтому `</script>` внутри значения рвёт тег (XSS). Экранируем `<` и U+2028/9.
- */
-function jsonForScript(value: string | null | undefined): string {
-  return JSON.stringify(value ?? null)
-    .replace(/</g, '\\u003c')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
 }
 
 const FALLBACK_CONTENT: LandingContent = {
@@ -123,7 +113,7 @@ export default async function BridgePage({
     const referer = h.get('referer');
     const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() || '0.0.0.0';
     const minute = epochMinuteOf();
-    const bucketKey = sessionId ?? ipHash(ip, cfg.encryptionKey);
+    const bucketKey = sessionId ?? ipHash(ip, cfg.ipHashSalt);
     const common = { token, slug, session_id: sessionId ?? undefined, ua_class: classifyUaClass(ua) };
     try {
       await recordEvents(deps, [
@@ -133,7 +123,7 @@ export default async function BridgePage({
           properties: {
             ...common,
             referer_host: referer ? new URL(referer).hostname : undefined,
-            ip_hash: ipHash(ip, cfg.encryptionKey),
+            ip_hash: ipHash(ip, cfg.ipHashSalt),
           },
           dedupKey: buildDedupKey('link_click', token, bucketKey, minute),
         },

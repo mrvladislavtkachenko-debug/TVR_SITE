@@ -27,6 +27,7 @@ const validBase: Record<string, string> = {
   LLM_MODEL: 'gpt-4o-mini',
   JWT_SECRET: '0123456789abcdef0123456789abcdef',
   ENCRYPTION_KEY: 'base64key_with_at_least_32_characters==',
+  IP_HASH_SALT: 'iphash-salt-0123456789ab',
 };
 
 describe('baseEnvSchema', () => {

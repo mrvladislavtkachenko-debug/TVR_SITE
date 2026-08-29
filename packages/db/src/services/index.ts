@@ -2,3 +2,8 @@ export * from './sql.js';
 export * from './cache.js';
 export * from './attribution.js';
 export * from './events.js';
+export * from './totp.js';
+export * from './admin.js';
+export * from './audit.js';
+export * from './pins.js';
+export * from './users.js';

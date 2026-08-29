@@ -1,31 +1,31 @@
 import type { FastifyInstance } from 'fastify';
 import {
   AppError,
-  bridgeEventSchema,
   buildDedupKey,
   classifyUaClass,
   epochMinuteOf,
   isTrackingToken,
+  telegramClickPropertiesSchema,
   type TokenFormat,
 } from '@tas/shared';
-import { ipHash, resolveTrackingLink, recordEvents, type EventInsert } from '@tas/db';
-import type { SqlExecutor } from '@tas/db';
-import type { KvCache } from '@tas/db';
+import { ipHash, resolveTrackingLink, recordEvents, type EventInsert } from '@tas/db/services';
+import type { SqlExecutor, KvCache } from '@tas/db/services';
 import type { RateCounter } from '../ratelimit.js';
 import { checkRateLimit } from '../ratelimit.js';
 
 /**
- * POST /api/v1/events — приём событий моста (PRD §19.1).
- * Telegram_click приходит beacon'ом с bridge-страницы (может теряться — Э7,
- * best-effort: ошибки записи не ломают ответ 202).
- * Сервер обогащает событие ip_hash/ua_class/referer_host и строит dedup_key сам.
+ * POST /api/v1/events — публичный приём ТОЛЬКО telegram_click (beacon с bridge,
+ * Э7; харднинг M4: link_click/bridge_view пишутся сервером — публичный приём
+ * всех трёх открывал воронку для pollution).
+ * Best-effort: ошибки записи/резолва не ломают ответ 202.
+ * Сервер обогащает событие ip_hash/ua_class и строит dedup_key сам.
  */
 
 export interface EventsRouteDeps {
   executor: SqlExecutor;
   cache?: KvCache;
   rateCounter: RateCounter;
-  salt: string; // для ipHash (ENCRYPTION_KEY)
+  ipHashSalt: string; // отдельная соль (не ENCRYPTION_KEY — ротация ключа не меняет хэши IP)
   tokenFormat: TokenFormat;
   limit?: number;
   windowSeconds?: number;
@@ -37,7 +37,7 @@ export function registerEventsRoute(app: FastifyInstance, deps: EventsRouteDeps)
 
   app.post('/api/v1/events', async (request, reply) => {
     const ip = request.ip ?? '0.0.0.0';
-    const hash = ipHash(ip, deps.salt);
+    const hash = ipHash(ip, deps.ipHashSalt);
 
     const rl = await checkRateLimit(deps.rateCounter, `tas:rl:ev:${hash}`, limit, windowSeconds);
     if (!rl.allowed) {
@@ -45,11 +45,21 @@ export function registerEventsRoute(app: FastifyInstance, deps: EventsRouteDeps)
       throw new AppError('RATE_LIMITED', 'Too many requests');
     }
 
-    const parsed = bridgeEventSchema.safeParse(request.body);
-    if (!parsed.success) {
-      throw new AppError('VALIDATION_ERROR', 'Invalid event payload', parsed.error.issues);
+    const body = request.body as { name?: unknown; properties?: unknown } | undefined;
+    if (body?.name === 'link_click' || body?.name === 'bridge_view') {
+      // серверные события: публичный приём запрещён (харднинг M4-1)
+      throw new AppError('FORBIDDEN', 'This event is recorded server-side only');
     }
-    const { name, properties } = parsed.data;
+    if (body?.name !== 'telegram_click') {
+      throw new AppError('VALIDATION_ERROR', 'Invalid event payload', [
+        { path: ['name'], message: "Expected 'telegram_click'" },
+      ]);
+    }
+    const parsedProps = telegramClickPropertiesSchema.safeParse(body.properties);
+    if (!parsedProps.success) {
+      throw new AppError('VALIDATION_ERROR', 'Invalid event payload', parsedProps.error.issues);
+    }
+    const properties = parsedProps.data;
     const token = properties.token;
 
     // Резолв для tracking_link_id — best-effort (Э7): при недоступности БД/кэша
@@ -69,33 +79,25 @@ export function registerEventsRoute(app: FastifyInstance, deps: EventsRouteDeps)
     }
 
     const ua = request.headers['user-agent'];
-    const referer = request.headers.referer;
     const enriched: Record<string, unknown> = {
       ...properties,
       ua_class: classifyUaClass(Array.isArray(ua) ? ua[0] : ua),
       ip_hash: hash,
     };
-    if (name === 'link_click' && referer) {
-      try {
-        enriched.referer_host = new URL(Array.isArray(referer) ? referer[0] : referer).hostname;
-      } catch {
-        // битый referer — не добавляем
-      }
-    }
 
     const bucketKey = properties.session_id ?? hash;
     const event: EventInsert = {
-      name,
+      name: 'telegram_click',
       trackingLinkId,
       properties: enriched,
-      dedupKey: buildDedupKey(name, token, bucketKey, epochMinuteOf()),
+      dedupKey: buildDedupKey('telegram_click', token, bucketKey, epochMinuteOf()),
     };
 
     try {
       await recordEvents({ executor: deps.executor }, [event]);
     } catch (err) {
       // best-effort (Э7): beacon-события не требуют гарантии записи
-      request.log.warn({ err, name }, 'events: запись не удалась (best-effort)');
+      request.log.warn({ err, name: 'telegram_click' }, 'events: запись не удалась (best-effort)');
     }
     reply.code(202);
     return { accepted: true };

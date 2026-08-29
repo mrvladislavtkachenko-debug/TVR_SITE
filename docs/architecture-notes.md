@@ -86,3 +86,19 @@
 3. `@prisma/client` объявлен прямой зависимостью apps/web — резолв runtime-require из node_modules (иначе pnpm-строгость его скрывает).
 
 **Проверено:** прод-сборка web проходит, bridge вживую рендерится с CTA-deep-link (см. CHANGELOG M3).
+
+## AN-18 — HS256 JWT собственными средствами (без jsonwebtoken), 2026-08-29, M4
+
+**Контекст:** правило «новые пакеты — только с одобрения»; для HS256+exp достаточно node:crypto.
+
+**Решение:** ~60 строк: alg зафиксирован HS256 (подмена alg=none отклоняется), exp обязателен, подпись сравнивается timingSafeEqual. TD-007: при желании заменяется на jsonwebtoken без изменения вызовов (signJwt/verifyJwt).
+
+## AN-19 — харднинг публичного events-эндпоинта и соли (2026-08-29, M4)
+
+1. `POST /api/v1/events` публично принимает **только** `telegram_click`; `link_click`/`bridge_view` → 403 FORBIDDEN (пишутся исключительно сервером — защита воронки от pollution, xарднинг M4-1).
+2. `IP_HASH_SALT` — отдельный env (не ENCRYPTION_KEY): ротация ключа шифрования TOTP не меняет хэши IP (харднинг M4-3).
+3. Dev-прокси: `next.config.ts` rewrite `/api/v1/:path*` → `API_ORIGIN` (только dev; в prod — Caddy, харднинг M4-2).
+
+## AN-20 — объём admin-API в M4 (2026-08-29)
+
+В M4 реализованы: auth/login, me, tracking-links (POST/GET), pins (GET/POST/PATCH), users (GET/GET/:id), openapi.json. Эндпоинты analytics/flows/broadcasts/products/orders/ai появляются в своих milestone'ах (M6–M9) вместе с функциями — API-слой (envelope, RBAC, audit, idempotency, zod) готов к расширению.

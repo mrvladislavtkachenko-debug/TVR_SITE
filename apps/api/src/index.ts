@@ -1,16 +1,20 @@
 import { Redis } from 'ioredis';
 import { apiEnvSchema, loadRootEnv, parseEnv } from '@tas/shared';
-import { createPrisma, createRedisCache, prismaExecutor } from '@tas/db';
+import { createPrisma } from '@tas/db/client';
+import { createRedisCache, prismaExecutor } from '@tas/db/services';
 import { buildServer, type ComponentState } from './server.js';
 import { createRedisRateCounter } from './ratelimit.js';
 import { registerEventsRoute } from './routes/events.js';
+import { registerAdminRoutes } from './routes/admin/index.js';
+import { createRedisCounterStore } from './auth/lockout.js';
+import { createRedisIdempotencyStore } from './idempotency.js';
 
 loadRootEnv();
 const env = parseEnv(apiEnvSchema);
 const prisma = createPrisma(env.DATABASE_URL);
 const executor = prismaExecutor(prisma);
 
-// Общий Redis для кэша резолва и rate limit (ленивое подключение)
+// Общий Redis для кэша резолва, rate limit, lockout и idempotency
 const appRedis = new Redis(env.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1 });
 const cache = createRedisCache(appRedis);
 const rateCounter = createRedisRateCounter(appRedis);
@@ -59,8 +63,20 @@ async function main(): Promise<void> {
         executor,
         cache,
         rateCounter,
-        salt: env.ENCRYPTION_KEY,
+        ipHashSalt: env.IP_HASH_SALT,
         tokenFormat: { prefix: env.ATTRIBUTION_TOKEN_PREFIX, length: env.NANOID_LEN },
+      });
+      registerAdminRoutes(appRef, {
+        executor,
+        cache,
+        jwtSecret: env.JWT_SECRET,
+        encryptionKey: env.ENCRYPTION_KEY,
+        lockoutStore: createRedisCounterStore(appRedis),
+        loginRateCounter: createRedisRateCounter(appRedis),
+        idempotency: createRedisIdempotencyStore(appRedis),
+        tokenFormat: { prefix: env.ATTRIBUTION_TOKEN_PREFIX, length: env.NANOID_LEN },
+        publicBaseUrl: env.PUBLIC_BASE_URL,
+        botUsername: env.TELEGRAM_BOT_USERNAME,
       });
     },
   });
