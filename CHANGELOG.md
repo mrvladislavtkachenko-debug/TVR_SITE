@@ -57,3 +57,40 @@ pnpm --filter @tas/db exec prisma migrate diff --from-schema-datamodel prisma/sc
 
 ### Дальше
 M3 — атрибуция: tracking_links (t1+nanoid(10)), резолв с кэшем 60s, bridge /m/:slug, события link_click/bridge_view.
+
+## M3 — Attribution + Bridge (2026-08-29)
+
+### Что сделано
+- **Токен** (shared/ids): генерация `t1+nanoid(10)` (base64url, формат из env — инвариант),
+  publicTrackingUrl/telegramDeepLink; генератор с исключением занятых + retry.
+- **Сервисы @tas/db** (инъектируемый SqlExecutor: Prisma в проде, pg в верификации):
+  `issueTrackingLink` (INSERT ON CONFLICT + retry), `resolveTrackingLink` (формат-чек →
+  кэш Redis 60s позитивный+негативный → SELECT is_active), `recordEvents`
+  (батч-INSERT `ON CONFLICT (dedup_key) DO NOTHING` — Э8), `ipHash` (salted SHA-256).
+- **Per-event zod-схемы** (shared/bridgeEvents): link_click/bridge_view/telegram_click
+  со свойствами по Э3/Э7; classifyUaClass (pinterest_app/bot/mobile/desktop/other);
+  buildDedupKey (минутный бакет, ≤128).
+- **API**: `POST /api/v1/events` — 60 req/мин/IP (Redis fixed-window), серверное обогащение
+  (ip_hash, ua_class, referer_host), best-effort 202 (Э7); 400/429 в error envelope.
+- **Bridge** (apps/web): `/m/[slug]?t=` — динамический лёгкий рендер (AN-15), серверный лог
+  link_click+bridge_view одним батчем, CTA `t.me/BOT?start={token}`, beacon telegram_click,
+  middleware `bsid`-cookie (30д, httpOnly), `/privacy` (draft), graceful-деградация при
+  недоступности БД/Redis (CTA без start → атрибуция unknown в M5).
+- **Инфраструктура пакетов** (AN-17): subpath-экспорты `@tas/db/client` и `@tas/db/services`;
+  createPrisma через createRequire; `@prisma/client` — прямая зависимость web.
+
+### Как проверено
+- 77/77 тестов (gen/резолв/кэш/дедуп/маршрут/лимиты/обогащение/best-effort).
+- Живой прогон (реальные PG+Redis, pg-исполнитель): issue → PIN URL → resolve miss/hit
+  (redis TTL 60s) → негативный кэш → батч 2 событий → дубль по dedup_key вставлен 0 строк.
+- Bridge вживую (dev): 200 + CTA `t.me/TASDevBot?start={token}` + beacon + privacy + bsid;
+  битый токен → CTA без start; без токена → 200; /privacy → 200; прод-сборка web зелёная.
+- Beacon на api вживую: 202 (валидный/битый referer/битый токен), 400 на мусор.
+
+### Известные ограничения среды
+- В песочнице нет prisma-движков (TD-005): живые записи в БД из приложений идут через
+  заглушку → health показывает db:down, события best-effort 202; SQL-слой верифицирован
+  pg-исполнителем; полный прогон — CI/машина владельца.
+
+### Дальше
+M4 — API: контракты §19 (admin-эндпоинты), zod-валидация, Idempotency-Key, RBAC + audit.

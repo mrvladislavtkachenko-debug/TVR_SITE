@@ -1,11 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { isTrackingToken, telegramDeepLink, trackingTokenRegex } from '../src/index.js';
+import {
+  generateTrackingToken,
+  generateTrackingTokenExcluding,
+  isTrackingToken,
+  publicTrackingUrl,
+  telegramDeepLink,
+  trackingTokenRegex,
+} from '../src/index.js';
 
 describe('tracking token (§10.2)', () => {
   const format = { prefix: 't1', length: 10 };
 
   it('принимает валидный t1 + nanoid(10)', () => {
     expect(isTrackingToken('t1aB9xK2mQz7', format)).toBe(true); // 12 символов всего
+  });
+
+  it('генерация: формат t1+nanoid(10), base64url-алфавит, уникальность 500', () => {
+    const generated = new Set<string>();
+    for (let i = 0; i < 500; i++) {
+      const token = generateTrackingToken(format);
+      expect(token).toMatch(/^t1[A-Za-z0-9_-]{10}$/);
+      generated.add(token);
+    }
+    expect(generated.size).toBe(500);
+  });
+
+  it('generateTrackingTokenExcluding: исключает занятые; 0 попыток → бросает', () => {
+    const first = generateTrackingToken({ prefix: 't9', length: 8 });
+    const second = generateTrackingTokenExcluding(new Set([first]), { prefix: 't9', length: 8 });
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/^t9[A-Za-z0-9_-]{8}$/);
+    expect(() => generateTrackingTokenExcluding(new Set(['x']), { prefix: 't9', length: 8 }, 0)).toThrow();
+  });
+
+  it('publicTrackingUrl: {base}/m/{slug}?t={token}', () => {
+    expect(publicTrackingUrl('https://tvrs.io/', 'morning-checklist', 't1aB9xK2mQz7')).toBe(
+      'https://tvrs.io/m/morning-checklist?t=t1aB9xK2mQz7',
+    );
   });
 
   it('отклоняет неверный префикс/длину/символы', () => {

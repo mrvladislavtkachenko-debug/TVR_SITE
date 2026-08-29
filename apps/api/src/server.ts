@@ -11,6 +11,8 @@ export interface HealthChecks {
 export interface BuildServerOptions {
   checks: HealthChecks;
   logger?: boolean | { level: string };
+  /** Регистрация дополнительных роутов (внедрение зависимостей для тестируемости). */
+  routes?: (app: FastifyInstance) => void;
 }
 
 async function safe(check: () => Promise<ComponentState>): Promise<ComponentState> {
@@ -38,6 +40,8 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
   app.setNotFoundHandler((_request, reply) => {
     reply.code(404).send(errorEnvelope('NOT_FOUND', 'Route not found'));
   });
+
+  opts.routes?.(app);
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AppError) {

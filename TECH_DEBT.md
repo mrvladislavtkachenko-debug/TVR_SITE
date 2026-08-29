@@ -24,6 +24,12 @@
 - **Почему ок:** GitHub-раннер с docker выполняет шаг в каждом пайплайне; YAML дополнительно проверен парсером.
 - **Когда закрыть:** первая выкладка на VPS (M10) — `docker compose -f infra/compose.base.yml up -d` на реальном хосте.
 
+## TD-006 — CI: шаг `prisma migrate diff` (урок M2: segments_code_key)
+- **Что:** schema.prisma ↔ миграции могут разойтись; «живые проверки инвариантов» этого не ловят.
+- **Когда закрыть:** как только ci.yml попадёт в ветку (нужно право workflows) — добавить шаг
+  `pnpm --filter @tas/db exec prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-migrations prisma/migrations --script` (пустой вывод = ок).
+- **Статус:** ждёт доступа (см. M1-блокер workflows).
+
 ## TD-005 — среда разработки: prisma-движки недоступны (binaries.prisma.sh вне allowlist)
 - **Что:** в песочнице нельзя выполнить `prisma generate/migrate` (движки качаются с binaries.prisma.sh).
   Локально установлены type/runtime-заглушки `@prisma/client/.prisma/client` (только node_modules,
@@ -32,3 +38,6 @@
   `migrate deploy`, seed работают штатно. CI остаётся авторитетным гейтом.
 - **Когда закрыть:** опционально — CI-workflow, выгружающий сгенерированный клиент artifact'ом
   (потребует права workflows на платформе); либо работа в среде с полным доступом.
+- **M3-дополнение:** заглушка живёт в `node_modules/.pnpm/@prisma+client@*/node_modules/.prisma/client/`
+  (именно туда резолвится bare-спецификатор `.prisma/client/default`); ЛЮБОЙ `pnpm install` затирает её —
+  пересоздавать (скрипт-инструкция в AN-17/runbooks M10). Установка в песочнице: `pnpm install --ignore-scripts`.

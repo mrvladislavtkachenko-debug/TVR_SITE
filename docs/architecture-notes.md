@@ -65,3 +65,24 @@
 - `events_properties_gin` — GIN (properties).
 
 **Верификация:** применена к живой БД через pg-драйвер; инварианты Э1/Э8 проверены живыми INSERT (duplicate → 23505), GIN-Containment-запрос работает. Эквивалентность схеме на машине с полным доступом: `pnpm --filter @tas/db exec prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-url "$DATABASE_URL" --script` → пустой вывод.
+
+## AN-15 — bridge: динамический лёгкий рендер вместо чистой статики/ISR (2026-08-29, M3)
+
+**Отклонение от:** контракт M3 «bridge на Next.js (ISR/статика)» в части статики.
+
+**Почему:** PRD §9.4 требует серверный лог `link_click`/`bridge_view` на каждом заходе (Э7: link_click — база воронки моста). Полностью статичная страница не видит сервером заходы — события остались бы только клиентскими beacon'ами (Pinterest in-app webview, блокировки JS → потеря начала воронки). Решение: динамический server component с кэшем резолва 60s (Redis) и батч-записью 2 событий одним INSERT; HTML без клиентского фреймворка и внешних ассетов — LCP-бюджет 1.5s держится (страница < 10KB в прод-сборке). Деградация: при недоступности БД/Redis страница рендерится с generic-CTA — атрибуция достроится по telegram_start (authoritative, M5).
+
+## AN-16 — web пишет события напрямую через @tas/db, beacon — на /api (2026-08-29, M3)
+
+Серверные события моста (link_click, bridge_view) web пишет сам через SQL-executor (@tas/db/services) — без self-HTTP к api (меньше задержка и точек отказа на hot path). Клиентский telegram_click идёт beacon'ом на `POST /api/v1/events` того же origin (в prod Caddy роутит /api/* на api:4000; в dev — прямой порт).
+
+## AN-17 — подключение Prisma в web: createRequire + subpath exports (2026-08-29, M3)
+
+**Проблема:** Next webpack бандлит `@prisma/client` из transitive-импорта TS-пакета (serverExternalPackages не сработал) — в бандле генерация `.prisma/client` недоступна. Кроме того, полный barrel @tas/db тянет нативный argon2 в бандл web.
+
+**Решение:**
+1. `createPrisma` подключает клиент через runtime `createRequire` (типы — статически, type-only import).
+2. `@tas/db` получил subpath-экспорты: `./client` (только PrismaClient) и `./services` (SQL-сервисы без argon2/otplib/prisma) — web импортирует только их.
+3. `@prisma/client` объявлен прямой зависимостью apps/web — резолв runtime-require из node_modules (иначе pnpm-строгость его скрывает).
+
+**Проверено:** прод-сборка web проходит, bridge вживую рендерится с CTA-deep-link (см. CHANGELOG M3).

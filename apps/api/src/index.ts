@@ -1,11 +1,19 @@
 import { Redis } from 'ioredis';
 import { apiEnvSchema, loadRootEnv, parseEnv } from '@tas/shared';
-import { createPrisma } from '@tas/db';
+import { createPrisma, createRedisCache, prismaExecutor } from '@tas/db';
 import { buildServer, type ComponentState } from './server.js';
+import { createRedisRateCounter } from './ratelimit.js';
+import { registerEventsRoute } from './routes/events.js';
 
 loadRootEnv();
 const env = parseEnv(apiEnvSchema);
 const prisma = createPrisma(env.DATABASE_URL);
+const executor = prismaExecutor(prisma);
+
+// Общий Redis для кэша резолва и rate limit (ленивое подключение)
+const appRedis = new Redis(env.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1 });
+const cache = createRedisCache(appRedis);
+const rateCounter = createRedisRateCounter(appRedis);
 
 /** TD-001 закрыт (M2): реальный запрос к БД вместо tcp-check. */
 export async function dbCheck(): Promise<ComponentState> {
@@ -46,6 +54,15 @@ async function main(): Promise<void> {
       queue: () => queueCheck(env.REDIS_URL),
     },
     logger: { level: 'info' },
+    routes: (appRef) => {
+      registerEventsRoute(appRef, {
+        executor,
+        cache,
+        rateCounter,
+        salt: env.ENCRYPTION_KEY,
+        tokenFormat: { prefix: env.ATTRIBUTION_TOKEN_PREFIX, length: env.NANOID_LEN },
+      });
+    },
   });
 
   await app.listen({ port: env.APP_PORT, host: '0.0.0.0' });
@@ -53,6 +70,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'graceful shutdown');
     await app.close();
+    appRedis.disconnect();
     await prisma.$disconnect();
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM').then(() => process.exit(0)));
