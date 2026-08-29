@@ -1,4 +1,5 @@
 import { cookies, headers } from 'next/headers';
+import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import {
   buildDedupKey,
@@ -32,6 +33,17 @@ interface LandingContent {
   headline: string;
   bullets: string[];
   ctaText: string;
+}
+
+/**
+ * JSON для встраивания в inline-<script>: JSON.stringify НЕ экранирует `<`,
+ * поэтому `</script>` внутри значения рвёт тег (XSS). Экранируем `<` и U+2028/9.
+ */
+function jsonForScript(value: string | null | undefined): string {
+  return JSON.stringify(value ?? null)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 const FALLBACK_CONTENT: LandingContent = {
@@ -76,6 +88,12 @@ export default async function BridgePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { slug } = await params;
+  // Безопасность: slug из URL попадает в SQL-lookup и inline-скрипт beacon.
+  // Строгий формат (как у landing_pages.slug) — прочее 404; исключает
+  // path-traversal и XSS через `</script>` в slug (reflected XSS на bridge).
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,95})$/.test(slug)) {
+    notFound();
+  }
   const sp = await searchParams;
   const tRaw = Array.isArray(sp.t) ? sp.t[0] : sp.t;
   const token = typeof tRaw === 'string' ? tRaw.trim() : '';
@@ -138,7 +156,7 @@ export default async function BridgePage({
     : `https://t.me/${cfg.botUsername}`;
 
   const beaconScript = tokenValid
-    ? `var d=document,s=d.getElementById('cta');s&&s.addEventListener('click',function(){var p=JSON.stringify({name:'telegram_click',properties:{slug:${JSON.stringify(slug)},token:${JSON.stringify(token)},session_id:${JSON.stringify(sessionId)}}});try{if(navigator.sendBeacon)navigator.sendBeacon('/api/v1/events',new Blob([p],{type:'application/json'}));else fetch('/api/v1/events',{method:'POST',headers:{'Content-Type':'application/json'},body:p,keepalive:true});}catch(e){}});`
+    ? `var d=document,s=d.getElementById('cta');s&&s.addEventListener('click',function(){var p=JSON.stringify({name:'telegram_click',properties:{slug:${jsonForScript(slug)},token:${jsonForScript(token)},session_id:${jsonForScript(sessionId)}})});try{if(navigator.sendBeacon)navigator.sendBeacon('/api/v1/events',new Blob([p],{type:'application/json'}));else fetch('/api/v1/events',{method:'POST',headers:{'Content-Type':'application/json'},body:p,keepalive:true});}catch(e){}});`
     : '';
 
   const model: BridgeModel = {
