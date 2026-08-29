@@ -388,6 +388,7 @@ CREATE UNIQUE INDEX "automation_flows_code_version_key" ON "automation_flows"("c
 CREATE INDEX "flow_runs_user_id_status_idx" ON "flow_runs"("user_id", "status");
 CREATE UNIQUE INDEX "message_templates_code_locale_version_key" ON "message_templates"("code", "locale", "version");
 CREATE UNIQUE INDEX "broadcasts_code_key" ON "broadcasts"("code");
+CREATE UNIQUE INDEX "segments_code_key" ON "segments"("code");
 CREATE UNIQUE INDEX "messages_outbox_dedup_key_key" ON "messages_outbox"("dedup_key");
 CREATE INDEX "messages_outbox_status_scheduled_at_idx" ON "messages_outbox"("status", "scheduled_at");
 CREATE INDEX "messages_outbox_user_id_idx" ON "messages_outbox"("user_id");
