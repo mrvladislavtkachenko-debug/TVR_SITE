@@ -16,6 +16,7 @@ const validBase: Record<string, string> = {
   DATABASE_URL: 'postgresql://tas:tas_dev@localhost:5432/tas',
   REDIS_URL: 'redis://localhost:6379',
   TELEGRAM_BOT_TOKEN: '123456:ABC-DEF_fake_token_for_tests',
+  LEAD_MAGNET_URL: 'https://files.example.com/lm.pdf',
   TELEGRAM_WEBHOOK_SECRET: '0123456789abcdef0123456789abcdef',
   TELEGRAM_BOT_USERNAME: 'TASbot',
   S3_ENDPOINT: 'https://s3.example.com',

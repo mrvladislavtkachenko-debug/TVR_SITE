@@ -122,5 +122,52 @@ M4 — API: контракты §19 (admin-эндпоинты), zod-валида
   (9 путей) → audit-след (5 действий) → RBAC viewer 403.
 
 ### Дальше
-M5 — бот: webhook + secret_token, идемпотентность update_id, upsert users, онбординг-FSM §11.4,
-лид-магнит, меню, /stop, обработка блокировки.
+M5 — бот: webhook + secret_token, идемпотентность update_id, upsert users, онбординг-FSM §11.4, лид-магнит, меню, /stop, обработка блокировки.
+
+## M5 — Telegram Bot (2026-08-29)
+
+### Что сделано
+- **Webhook** (`apps/bot` :4100, grammY §20): `X-Telegram-Bot-Api-Secret-Token`
+  constant-time (SHA-256 + timingSafeEqual); ACK 200 сразу после записи update,
+  обработка в фоне (`UpdatePipeline`, конкурентность 5); идемпотентность по
+  `update_id` (telegram_updates, повторная доставка → duplicate без обработки);
+  ошибки БД → 500 для ретрая Telegram (§28.12/14); processed_at после обработки.
+- **/start**: payload резолвится ДО любой реакции (§11.1); битый → unknown +
+  alert, без payload → direct (Э4, без Левенштейна); first_touch ровно один раз,
+  last_touch переключение is_current (Э1, AN-24 — два стейтмента из-за частичного
+  уникального индекса); повторный /start — «с возвращением», is_returning;
+  upsert users + обновление username из update (§28.4); resubscribe после /stop.
+- **FSM-онбординг §11.4** (`user_profiles.fsm_state`): лид-магнит ДО опроса —
+  sendDocument(S3 URL) + caption-шаблон; 1 вопрос 4 кнопки `q1:S1..S4` (≤64 байт);
+  quick-win сегмента + вопрос частоты `q2:normal|low`; завершение →
+  onboarding_completed_at, lifecycle new→onboarded, меню. §28.16: подсказка
+  «выберите кнопку» ×2, затем игнор.
+- **Команды §11.2**: /menu (§11.3 inline), /help, /support, /settings
+  (setfreq → settings_changed), /stop — сегмент unsubscribed, гашение flow_runs
+  и flow/broadcast-outbox, событие unsubscribe.
+- **Блокировка §28.5**: 403 при отправке → is_blocked, lifecycle blocked,
+  user_state_changed, отмена flow_runs и ВСЕГО outbox, bot_blocked; возврат
+  пользователя → unblock + reactivated.
+- **Outbox-отправитель** (M5: прямой, лимиты BullMQ — M6): claim due-строк
+  FOR UPDATE SKIP LOCKED, ≤1 сообщение/сек на чат, 429 → retry_after-пауза,
+  5xx/сеть → 3 попытки с отсрочкой, lead_magnet_delivered на фактическую отправку.
+- **Все ответы из шаблонов** (§39.7): seed += 18 bot_*-шаблонов + сегмент
+  unsubscribed; рендер {{var}}; кнопки с валидацией callback_data ≤64.
+- **Privacy §16.3**: содержимое переписки не логируется (тест-шпион логгера;
+  message_received хранит только length_bucket); сырые update — только в
+  telegram_updates (TTL 7 дней, cron — M6).
+- **CLI**: `pnpm --filter @tas/bot set-webhook` (runbook §39.13).
+
+### Как проверено
+- 156/156 тестов (+40 к M4): webhook (секрет/дедуп/ACK-до-обработки/полная
+  HTTP-цепочка через мок Bot API), /start-сценарии (Э1/Э4/§28.x), FSM, команды,
+  отправитель (пейсинг/403/429/ретраи/dedup), privacy.
+- Живой прогон против реального PG + HTTP-мок Telegram: 401/200/duplicate,
+  sendDocument+sendMessage по HTTP, атрибуция first/last с переключением
+  is_current под реальным индексом, полный онбординг, welcome-back, /stop-каскад,
+  privacy. Поймал и закрыл AN-24 (CTE vs частичный индекс).
+
+### Дальше
+M6 — автоматизация: BullMQ (outbox-sender с лимитами 25/s + cap/день, delayed
+jobs), интерпретатор automation_flows §13.1 (welcome/abandonment/win-back), TTL
+telegram_updates, cron-пересчёт lifecycle/сегментов.

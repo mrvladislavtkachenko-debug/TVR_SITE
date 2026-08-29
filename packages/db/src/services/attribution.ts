@@ -147,3 +147,59 @@ export async function resolveTrackingLink(
   await deps.cache?.set(cacheKey, JSON.stringify(row), TRACKING_LINK_TTL_SEC);
   return row;
 }
+
+export type StartTouchResult = 'first_and_last' | 'first_only' | 'last_only' | 'unchanged';
+
+/**
+ * Записать касание при /start (Э1, §10.4, §28.1/28.7):
+ * - first_touch создаётся РОВНО один раз (WHERE NOT EXISTS);
+ * - прежний last_touch теряет is_current, новый last_touch получает is_current;
+ * - повторный /start с тем же token не плодит строки ('unchanged').
+ *
+ * ДВА стейтмента (не один CTE): частичный уникальный индекс
+ * attributions_one_current_last_touch (M2) проверяется немедленно, а PG не
+ * гарантирует порядок data-modifying CTE внутри одного стейтмента —
+ * очистка и вставка в одном CTE дают violation (поймано live-прогоном M5).
+ *
+ * Гонка разных токенов одного юзера: проигравший INSERT гасится
+ * ON CONFLICT DO NOTHING (победителем записи остаётся первый writer;
+ * точная история — в events.telegram_start).
+ */
+export async function recordStartTouch(
+  deps: { executor: SqlExecutor },
+  input: { userId: string; trackingLinkId: string },
+): Promise<StartTouchResult> {
+  // 1) снять is_current с чужого текущего last (коммит до вставки)
+  await deps.executor.execute(
+    `UPDATE attributions SET is_current = false
+     WHERE user_id = $1 AND touch = 'last' AND is_current AND tracking_link_id <> $2`,
+    [input.userId, input.trackingLinkId],
+  );
+  // 2) first (ровно один) + новый current last
+  const result = await deps.executor.query(
+    `WITH ins_first AS (
+       INSERT INTO attributions (user_id, touch, is_current, tracking_link_id, occurred_at)
+       SELECT $1, 'first', false, $2, now()
+       WHERE NOT EXISTS (SELECT 1 FROM attributions WHERE user_id = $1 AND touch = 'first')
+       RETURNING id
+     ), ins_last AS (
+       INSERT INTO attributions (user_id, touch, is_current, tracking_link_id, occurred_at)
+       SELECT $1, 'last', true, $2, now()
+       WHERE NOT EXISTS (
+         SELECT 1 FROM attributions
+         WHERE user_id = $1 AND touch = 'last' AND is_current AND tracking_link_id = $2
+       )
+       ON CONFLICT DO NOTHING
+       RETURNING id
+     )
+     SELECT (SELECT count(*) FROM ins_first) AS firsts, (SELECT count(*) FROM ins_last) AS lasts`,
+    [input.userId, input.trackingLinkId],
+  );
+  const row = result.rows[0] as { firsts: string | number; lasts: string | number } | undefined;
+  const firsts = Number(row?.firsts ?? 0);
+  const lasts = Number(row?.lasts ?? 0);
+  if (firsts > 0 && lasts > 0) return 'first_and_last';
+  if (firsts > 0) return 'first_only';
+  if (lasts > 0) return 'last_only';
+  return 'unchanged';
+}

@@ -18,12 +18,14 @@ const SOURCES = [
   { code: 'telegram_organic', name: 'Telegram (поиск/шеринг)' },
 ];
 
-// --- 2. сегменты S1–S4 (§6.2) ----------------------------------------------
+// --- 2. сегменты S1–S4 (§6.2) + служебный 'unsubscribed' (M5: /stop) -------
 const SEGMENTS = [
   { code: 'S1', name: 'Планировщица — рутины и порядок' },
   { code: 'S2', name: 'Начинающая самостоятельная — переходы/первый опыт' },
   { code: 'S3', name: 'Микро-предприниматель — шаблоны и процессы' },
   { code: 'S4', name: 'Саморазвитие — привычки и мотивация' },
+  // M5 (§11.2 /stop, §13.1 guard 'unsubscribed'): материализация отписки
+  { code: 'unsubscribed', name: 'Отписался (/stop) — не писать первым' },
 ];
 
 // --- 3. три флоу §13.2 (определения §13.1; интерпретатор — M6) --------------
@@ -87,6 +89,14 @@ const FLOWS: { code: string; definition: unknown }[] = [
 ];
 
 // --- 4. en-шаблоны для флоу (message_templates) ------------------------------
+const MENU_BUTTONS = [
+  { text: '📚 Получить чек-лист', type: 'callback', data: 'lm:again' },
+  { text: '🎯 Мой план', type: 'callback', data: 'plan:show' },
+  { text: '🛍 Products', type: 'callback', data: 'products:list' },
+  { text: '💬 Оценить бота', type: 'callback', data: 'feedback:ask' },
+  { text: '⚙️ Settings', type: 'callback', data: 'settings:open' },
+];
+
 const TEMPLATES: { code: string; body: string; buttons?: unknown }[] = [
   { code: 'ws_value_1', body: 'Совет №1 по твоей теме: начни день с одного главного действия. Хочешь пример? [Дальше]' },
   { code: 'ws_value_2', body: 'Совет №2: план на неделю умещается в 20 минут. Покажу как.' },
@@ -96,6 +106,82 @@ const TEMPLATES: { code: string; body: string; buttons?: unknown }[] = [
   { code: 'wb_reengage', body: 'Продолжим? Один короткий совет в день — и система вернётся на место.' },
   { code: 'pp_thanks_1', body: 'Спасибо за покупку! Planner Pack ниже. Как использовать — 3 шага.' },
   { code: 'pp_feedback_1', body: 'Как тебе Planner Pack? Один клик: 👍 / 👎' },
+  // --- M5: шаблоны бота (§11.2–11.4, §39.7 — все ответы из шаблонов) --------
+  {
+    code: 'bot_welcome_doc',
+    body: 'Привет, {{first_name}}! 👋 Твой чек-лист «Утро без хаоса» — в файле ниже. Сохрани его, пригодится!',
+  },
+  {
+    code: 'bot_q1',
+    body: 'Что для тебя актуальнее всего прямо сейчас?',
+    buttons: [
+      { text: 'Рутины и порядок', type: 'callback', data: 'q1:S1' },
+      { text: 'Самостоятельность', type: 'callback', data: 'q1:S2' },
+      { text: 'Шаблоны и процессы', type: 'callback', data: 'q1:S3' },
+      { text: 'Привычки и мотивация', type: 'callback', data: 'q1:S4' },
+    ],
+  },
+  {
+    code: 'bot_qw_s1',
+    body: 'Понял! Вот 3 шага, с которых стоит начать:\n1. Вечером — 5 минут на план завтрашнего дня.\n2. Утро начинается не с телефона, а с одного главного действия.\n3. Одна рутина за раз: закрепи — потом добавляй следующую.',
+  },
+  {
+    code: 'bot_qw_s2',
+    body: 'Понял! Вот 3 шага, с которых стоит начать:\n1. Выбери одно дело недели — только одно.\n2. Разбей его на шаги по 15 минут.\n3. Отмечай сделанное — прогресс мотивирует лучше планов.',
+  },
+  {
+    code: 'bot_qw_s3',
+    body: 'Понял! Вот 3 шага, с которых стоит начать:\n1. Опиши один повторяющийся процесс текстом.\n2. Преврати его в шаблон-чек-лист.\n3. Проверь шаблон на реальной задаче и упрости.',
+  },
+  {
+    code: 'bot_qw_s4',
+    body: 'Понял! Вот 3 шага, с которых стоит начать:\n1. Привяжи новую привычку к существующему действию.\n2. Начни с 2 минут в день — минимум.\n3. Трекай цепочку дней, а не «идеальность».',
+  },
+  {
+    code: 'bot_q2',
+    body: 'Я буду присылать короткие советы 2–3 раза в неделю. Ок?',
+    buttons: [
+      { text: 'Отлично 👍', type: 'callback', data: 'q2:normal' },
+      { text: 'Реже, пожалуйста', type: 'callback', data: 'q2:low' },
+    ],
+  },
+  { code: 'bot_menu', body: 'Главное меню — выбирай:', buttons: MENU_BUTTONS },
+  {
+    code: 'bot_welcome_back',
+    body: 'С возвращением, {{first_name}}! 👋 Всё под рукой:',
+    buttons: MENU_BUTTONS,
+  },
+  { code: 'bot_lm_again', body: 'Держи чек-лист ещё раз 📄' },
+  { code: 'bot_plan_no_segment', body: 'Сначала выбери тему — нажми /start, это 30 секунд.' },
+  { code: 'bot_products_soon', body: 'Каталог продуктов скоро появится. Пока — твои шаги в «Мой план» ✨' },
+  {
+    code: 'bot_feedback',
+    body: 'Как тебе бот? Один клик:',
+    buttons: [
+      { text: '👍', type: 'callback', data: 'fb:good' },
+      { text: '👎', type: 'callback', data: 'fb:bad' },
+    ],
+  },
+  { code: 'bot_feedback_thanks', body: 'Спасибо за оценку!' },
+  {
+    code: 'bot_settings',
+    body: 'Как часто присылать советы?',
+    buttons: [
+      { text: 'Нормально (2–3 в неделю)', type: 'callback', data: 'setfreq:normal' },
+      { text: 'Реже (1 в неделю)', type: 'callback', data: 'setfreq:low' },
+    ],
+  },
+  { code: 'bot_settings_done', body: 'Готово: частота {{frequency}} ✅' },
+  {
+    code: 'bot_stop',
+    body: 'Готово — все автоматические цепочки выключены, я больше не пишу первой.\nВернуться в любой момент: /start',
+  },
+  {
+    code: 'bot_help',
+    body: 'Что я умею:\n• /menu — главное меню\n• /settings — частота советов\n• /support — связаться с владельцем\n\nОстановить подсказки: /stop\nУдалить свои данные (GDPR): напиши владельцу через /support — удалим в течение 72 часов.',
+  },
+  { code: 'bot_support', body: 'Напиши свой вопрос прямо в чат — владелец читает. Либо FAQ: главный вопрос обычно решается кнопкой «Мой план» в /menu.' },
+  { code: 'bot_fsm_hint', body: 'Пожалуйста, выбери вариант кнопкой ниже 👇' },
 ];
 
 // --- 5. продукт (§5.2: digital product $9–19 через Stars) --------------------

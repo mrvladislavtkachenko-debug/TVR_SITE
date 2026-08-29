@@ -7,3 +7,6 @@ export * from './admin.js';
 export * from './audit.js';
 export * from './pins.js';
 export * from './users.js';
+export * from './outbox.js';
+export * from './updates.js';
+export * from './flowruns.js';

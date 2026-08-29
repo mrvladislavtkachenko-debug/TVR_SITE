@@ -11,6 +11,8 @@ export interface HealthChecks {
 export interface BuildServerOptions {
   checks: HealthChecks;
   logger?: boolean | { level: string };
+  /** Регистрация дополнительных роутов (внедрение зависимостей для тестируемости). */
+  routes?: (app: FastifyInstance) => void;
 }
 
 async function safe(check: () => Promise<ComponentState>): Promise<ComponentState> {
@@ -23,7 +25,7 @@ async function safe(check: () => Promise<ComponentState>): Promise<ComponentStat
 
 /**
  * Фабрика приложения бота (Э5: отдельный сервис :4100).
- * Webhook /webhook/telegram появится в M5 (grammY + secret_token).
+ * POST /webhook/telegram регистрируется через routes (M5, AN-21).
  * Дублирование с apps/api — TECH_DEBT TD-002.
  */
 export async function buildServer(opts: BuildServerOptions): Promise<FastifyInstance> {
@@ -39,6 +41,8 @@ export async function buildServer(opts: BuildServerOptions): Promise<FastifyInst
   app.setNotFoundHandler((_request, reply) => {
     reply.code(404).send(errorEnvelope('NOT_FOUND', 'Route not found'));
   });
+
+  opts.routes?.(app);
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AppError) {

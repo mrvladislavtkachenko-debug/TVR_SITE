@@ -56,3 +56,94 @@ export const baseEventSchema = z.object({
 });
 
 export type BaseEvent = z.infer<typeof baseEventSchema>;
+
+// ---------------------------------------------------------------------------
+// Per-event схемы properties (§16.2). M3: bridge-события; M5: события бота.
+// ---------------------------------------------------------------------------
+
+/** Корзины длины текста вместо самой длины (privacy §16.3 — не логируем текст). */
+export const MESSAGE_LENGTH_BUCKETS = ['empty', 'short', 'medium', 'long'] as const;
+export type MessageLengthBucket = (typeof MESSAGE_LENGTH_BUCKETS)[number];
+
+export function messageLengthBucket(length: number): MessageLengthBucket {
+  if (length <= 0) return 'empty';
+  if (length <= 64) return 'short';
+  if (length <= 256) return 'medium';
+  return 'long';
+}
+
+/** telegram_start: источник входа в бота (§16.2, Э4 — без Левенштейна). */
+export const telegramStartPropsSchema = z.object({
+  start_payload: z.string().max(64).nullable(),
+  /** ok — резолвнут; none — /start без payload; malformed — запрещённые символы; unresolved — токен не найден. */
+  payload_status: z.enum(['ok', 'none', 'malformed', 'unresolved']),
+  is_returning: z.boolean(),
+  source_hint: z.enum(['tracked', 'direct', 'telegram_organic', 'unknown']),
+});
+
+export const onboardingStartedPropsSchema = z.object({ step: z.number().int().min(1) });
+
+export const onboardingCompletedPropsSchema = z.object({ segment_code: z.string().min(1).max(64) });
+
+export const leadMagnetDeliveredPropsSchema = z.object({
+  delivery_kind: z.enum(['file', 'link']),
+});
+
+export const segmentAssignedPropsSchema = z.object({
+  segment_code: z.string().min(1).max(64),
+  origin: z.enum(['onboarding', 'rule', 'manual']),
+});
+
+export const buttonClickedPropsSchema = z.object({
+  button_code: z.string().min(1).max(64),
+  screen: z.string().min(1).max(64),
+});
+
+export const menuOpenedPropsSchema = z.object({}).strict();
+
+export const messageReceivedPropsSchema = z.object({
+  length_bucket: z.enum(MESSAGE_LENGTH_BUCKETS),
+  /** intent_class появится в M9 (AI-классификация); в M5 намеренно отсутствует. */
+});
+
+export const settingsChangedPropsSchema = z.object({
+  field: z.string().min(1).max(64),
+  value: z.string().min(1).max(64),
+});
+
+export const unsubscribePropsSchema = z.object({
+  reason: z.string().max(128).nullable(),
+});
+
+export const botBlockedPropsSchema = z.object({
+  last_flow_code: z.string().max(64).nullable(),
+});
+
+export const userStateChangedPropsSchema = z.object({
+  from: z.string().min(1).max(32),
+  to: z.string().min(1).max(32),
+});
+
+export const feedbackSubmittedPropsSchema = z.object({ score: z.number().int().min(0).max(1) });
+
+export const supportRequestedPropsSchema = z.object({}).strict();
+
+/** Реестр схем properties событий, эмитируемых ботом (M5). */
+export const botEventPropsSchemas = {
+  telegram_start: telegramStartPropsSchema,
+  onboarding_started: onboardingStartedPropsSchema,
+  onboarding_completed: onboardingCompletedPropsSchema,
+  lead_magnet_delivered: leadMagnetDeliveredPropsSchema,
+  segment_assigned: segmentAssignedPropsSchema,
+  button_clicked: buttonClickedPropsSchema,
+  menu_opened: menuOpenedPropsSchema,
+  message_received: messageReceivedPropsSchema,
+  settings_changed: settingsChangedPropsSchema,
+  unsubscribe: unsubscribePropsSchema,
+  bot_blocked: botBlockedPropsSchema,
+  user_state_changed: userStateChangedPropsSchema,
+  feedback_submitted: feedbackSubmittedPropsSchema,
+  support_requested: supportRequestedPropsSchema,
+} as const;
+
+export type BotEventName = keyof typeof botEventPropsSchemas;

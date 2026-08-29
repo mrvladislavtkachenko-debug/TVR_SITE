@@ -87,6 +87,13 @@ export type ApiEnv = z.infer<typeof apiEnvSchema>;
 /** apps/bot: отдельный Fastify :4100 (Э5, AN-10). */
 export const botEnvSchema = baseEnvSchema.extend({
   BOT_PORT: z.coerce.number().int().min(1).max(65535).default(4100),
+  /**
+   * Лид-магнит (§11.4 M1): файл в S3, доступный боту по HTTPS-URL
+   * (публичный бакет/кастомный домен R2/B2). Telegram сам скачивает файл
+   * при sendDocument(url). Приватная доставка — см. TECH_DEBT TD-010.
+   */
+  LEAD_MAGNET_URL: urlish,
+  LEAD_MAGNET_FILENAME: z.string().min(3).max(128).default('checklist.pdf'),
 });
 
 export type BotEnv = z.infer<typeof botEnvSchema>;

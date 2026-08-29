@@ -102,3 +102,51 @@
 ## AN-20 — объём admin-API в M4 (2026-08-29)
 
 В M4 реализованы: auth/login, me, tracking-links (POST/GET), pins (GET/POST/PATCH), users (GET/GET/:id), openapi.json. Эндпоинты analytics/flows/broadcasts/products/orders/ai появляются в своих milestone'ах (M6–M9) вместе с функциями — API-слой (envelope, RBAC, audit, idempotency, zod) готов к расширению.
+
+## AN-21 — бот M5: webhook ACK-первым, фоновый конвейер, идемпотентность (2026-08-29)
+
+`POST /webhook/telegram` (apps/bot :4100, Э5/AN-10 — несмотря на §37.8, где webhook
+нарисован на app:4000): проверка `X-Telegram-Bot-Api-Secret-Token` constant-time
+(SHA-256-дайджесты + timingSafeEqual), затем `INSERT telegram_updates ON CONFLICT
+(update_id) DO NOTHING` и мгновенный ACK 200 (§28.9/28.12, NFR-1). Обработка —
+`bot.handleUpdate` в `UpdatePipeline` (конкурентность 5, сглаживание бёрстов §22;
+полные rate-limits — M6) с последующим `processed_at`. Дубликат доставки — `{ok:true,
+duplicate:true}` без обработки. Ошибка БД → 500 (Telegram повторит, §28.14);
+ошибка обработки не рушит ACK — update остаётся с `processed_at IS NULL` (кандидат
+на replay, cron M6). Известное ограничение: конвейер обрабатывает update
+параллельно, т.е. быстрые подряд идущие клики одного пользователя могут
+обработаться вне порядка (FSM-роутер относится к вне-шаговым кнопкам толерантно —
+stale-ветка без смены состояния).
+
+## AN-22 — материализация /stop и разблокировки (2026-08-29)
+
+Отписка хранится членством в статическом сегменте `unsubscribed` (user_segments,
+origin=manual): M6-guard'ы (`cancel_if: ['unsubscribed']` §13.1) проверяют его
+перед отправкой; отдельной колонки в схеме нет (PRD §12.1 не требует).
+`/stop` гасит flow_runs (active→cancelled) и pending/sending outbox
+kind flow|broadcast → skipped; транзакционный ответ подтверждения доставляется.
+Повторный /start снимает членство (resubscribe). Разблокировка §28.5: любое
+входящее от is_blocked-пользователя снимает флаг + lifecycle blocked→reactivated
+(`user_state_changed`). 403 при отправке: каскад — is_blocked, lifecycle,
+flow_runs, ВЕСЬ outbox (skipAllOutboxForUser), событие bot_blocked.
+
+## AN-23 — лид-магнит: sendDocument по HTTPS-URL из S3 (2026-08-29, вопрос владельцу)
+
+Файл лид-магнита лежит в S3-совместимом хранилище (§20) и доступен боту по
+публичному HTTPS-URL (публичный бакет/кастомный домен R2/B2): Telegram сам
+скачивает файл при `sendDocument(url)` — код прост, ноль новых зависимостей,
+нулевая пропускная способность нашего VPS. env: `LEAD_MAGNET_URL` +
+`LEAD_MAGNET_FILENAME`. Событие `lead_magnet_delivered{delivery_kind:'file'}`
+эмитится отправителем на фактическую отправку.
+**Требует решения владельца:** приватные бакеты потребуют скачивания ботом
+(@aws-sdk/client-s3, пакет вне §20 — нужно явное одобрение) — см. TD-010.
+
+## AN-24 — recordStartTouch: два стейтмента вместо одного CTE (2026-08-29)
+
+Частичный уникальный индекс `attributions_one_current_last_touch` (M2, Э1)
+проверяется немедленно, а PG не гарантирует порядок data-modifying CTE — очистка
+is_current и вставка нового last в одном стейтменте дают violation (поймано
+live-прогоном M5 против реального PG). Решение: стейтмент 1 — снятие is_current
+с чужого текущего last; стейтмент 2 — CTE с вставками first/last
+(`ON CONFLICT DO NOTHING`). Гонка разных токенов одного юзера: проигравший
+гасится DO NOTHING (побеждает первый writer; история — в events).
