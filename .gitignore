@@ -1,0 +1,17 @@
+# deps / build
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# env — только example в git (секреты никогда)
+.env
+.env.*
+!.env.example
+
+# misc
+.DS_Store
+*.log
+run/

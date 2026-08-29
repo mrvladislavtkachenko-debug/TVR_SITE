@@ -1,0 +1,29 @@
+{
+  "name": "tas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TAS — Pinterest → Telegram Traffic Acquisition System (PRD docs/PRD_Pinterest_Telegram_System.md v1.0)",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel -r dev",
+    "build": "pnpm -r build",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "compose:up": "docker compose -f infra/compose.base.yml up -d",
+    "compose:down": "docker compose -f infra/compose.base.yml down"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "eslint": "^9.30.0",
+    "prettier": "^3.6.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.35.0",
+    "vitest": "^3.2.0"
+  }
+}

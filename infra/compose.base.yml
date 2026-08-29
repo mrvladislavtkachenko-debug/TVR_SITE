@@ -1,0 +1,41 @@
+# Dev-инфраструктура TAS (PRD §21, Э5).
+# Только данные: postgres + redis. Приложения запускаются на хосте (pnpm dev).
+# Prod-оверлей (apps + caddy, без публикации BOT_PORT) — infra/compose.prod.yml в M10.
+
+name: tas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tas
+      POSTGRES_PASSWORD: tas_dev
+      POSTGRES_DB: tas
+    ports:
+      # только localhost dev-машины
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tas -d tas"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # только localhost dev-машины
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  pgdata:
+  redisdata:

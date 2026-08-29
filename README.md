@@ -1,17 +1,38 @@
-# TVR_SITE
+# TVR_SITE — TAS
 
-Pinterest → Telegram Traffic Acquisition System (TAS).
+Pinterest → Telegram Traffic Acquisition System.
+Архитектурная истина: [`docs/PRD_Pinterest_Telegram_System.md`](docs/PRD_Pinterest_Telegram_System.md) (v1.0)
++ эррата владельца и отклонения: [`docs/architecture-notes.md`](docs/architecture-notes.md).
 
-## Документация
-
-- [`docs/PRD_Pinterest_Telegram_System.md`](docs/PRD_Pinterest_Telegram_System.md) — полный PRD + System Design + Technical Specification (v1.0). Основа для будущего `MASTER PROMPT FOR AI CODING AGENT` (структура — раздел 40 документа).
-
-## Суть системы
+## Структура (Э5)
 
 ```
-Pinterest (organic) → Bridge Landing (свой домен, атрибуция)
-  → Telegram Bot (onboarding → сегментация → value)
-    → Activation → Conversion (Telegram Stars) → Retention/Revenue
+apps/
+  api/      Fastify :4000        — REST API, bridge-события (M3+), admin API (M4+)
+  bot/      Fastify :4100        — Telegram webhook (M5); в prod наружу не публикуется (AN-10)
+  web/      Next.js :3000        — bridge /m/:slug (M3), admin (M8)
+  worker/   BullMQ (M6)          — flows, outbox sender
+packages/
+  shared/   zod env-схемы, таксономия событий, error envelope, утилиты токена
+infra/
+  compose.base.yml               — postgres:16 + redis:7 (dev)
 ```
 
-Ключевые решения зафиксированы в §38 документа (стек: TypeScript monorepo, Fastify, grammY, Next.js, PostgreSQL, Redis/BullMQ, Docker Compose на VPS).
+## Быстрый старт
+
+```bash
+corepack enable && pnpm -v          # pnpm@10 (см. packageManager)
+pnpm install
+docker compose -f infra/compose.base.yml up -d   # postgres + redis
+cp .env.example .env                # заполнить секреты (в .env.example — подсказки)
+
+pnpm lint && pnpm typecheck && pnpm test
+
+pnpm --filter @tas/api dev          # http://localhost:4000/health
+pnpm --filter @tas/bot dev          # http://localhost:4100/health
+pnpm --filter @tas/web dev          # http://localhost:3000
+```
+
+## Milestone'ы
+
+Текущий статус и записи — [`CHANGELOG.md`](CHANGELOG.md); долги — [`TECH_DEBT.md`](TECH_DEBT.md).

@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Postinstall-скрипты, разрешённые pnpm@10 (esbuild нужен tsx/vitest).
+# prisma будет добавлен в M2.
+onlyBuiltDependencies:
+  - esbuild
